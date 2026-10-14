@@ -1,0 +1,72 @@
+name: Windows candidate release
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+# No concurrency cancellation: each push must reserve a version.
+jobs:
+  reserve:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - id: version
+        run: python scripts/next_version.py --sha '${{ github.sha }}' --before '${{ github.event.before }}' --major 0
+  checks:
+    needs: reserve
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.13.0'
+      - run: uv python install 3.14
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run ty check
+      - run: uv run pytest
+  build:
+    needs: [reserve, checks]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.13.0'
+      - run: uv python install 3.14
+      - shell: pwsh
+        run: ./scripts/build_windows.ps1 -BuildVersion '${{ needs.reserve.outputs.version }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-distribution
+          path: |
+            dist/LocalOCR-v*-windows-x64.zip
+            dist/*.sha256
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = '${{ needs.reserve.outputs.tag }}'
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) { exit 0 }
+          gh release create $tag dist/LocalOCR-v*-windows-x64.zip dist/*.sha256 --verify-tag --prerelease --title "LocalOCR $tag candidate" --notes-file docs/RELEASE_NOTES.md
+          if ($LASTEXITCODE -ne 0) { throw 'Release failed' }

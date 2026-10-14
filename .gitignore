@@ -1,0 +1,27 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+ build/
+build/
+dist/
+*.spec
+*.log
+*.tar.*
+*.zip
+outputs/
+results/
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.tif
+*.tiff
+*.webp
+*.xlsx
+ocr_glm.py
+prepare_table.py
+assemble_table.py
+src/localocr/_build_version.py
+.evidence/

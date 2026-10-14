@@ -1,0 +1,28 @@
+[build-system]
+requires = ["uv_build>=0.12,<0.14"]
+build-backend = "uv_build"
+[project]
+name = "localocr"
+version = "0.1"
+description = "Offline image tables to Excel through local Ollama"
+requires-python = ">=3.14,<3.15"
+dependencies = ["PySide6-Essentials>=6.10", "httpx>=0.28", "Pillow>=12", "opencv-python-headless>=4.13", "openpyxl>=3.1.5", "typer>=0.20"]
+[project.scripts]
+localocr = "localocr.cli:main"
+[project.gui-scripts]
+localocr-gui = "localocr.gui.app:main"
+[dependency-groups]
+dev = ["ruff>=0.14", "ty>=0.0.1", "pytest>=9", "pyinstaller>=6.16"]
+[tool.ruff]
+extend-exclude = ["ocr_glm.py", "prepare_table.py", "assemble_table.py", "outputs"]
+target-version = "py314"
+line-length = 100
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+[tool.ty.environment]
+python-version = "3.14"
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+[tool.ty.src]
+exclude = ["ocr_glm.py", "prepare_table.py", "assemble_table.py", "outputs"]

@@ -1,0 +1,79 @@
+"""Real frozen CLI -> local HTTP mock -> XLSX roundtrip (no external network)."""
+
+import argparse
+import json
+import subprocess
+import tempfile
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+from openpyxl import load_workbook
+from PIL import Image
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--exe", required=True, type=Path)
+    parser.add_argument("--version", required=True)
+    args = parser.parse_args()
+    exe = args.exe.resolve()
+    version = subprocess.check_output([str(exe), "--version"], text=True).strip()
+    if version != args.version:
+        raise RuntimeError(f"Frozen version mismatch: {version}")
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, format: str, *args):
+            pass
+
+        def do_GET(self):
+            self.respond({"models": [{"name": "glm-ocr:latest"}]})
+
+        def do_POST(self):
+            payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if payload["stream"] or not payload["images"]:
+                raise RuntimeError("Incorrect payload")
+            self.respond(
+                {
+                    "response": "<table><tr><th>Код</th><th>Значение</th></tr><tr><td>0012</td><td>=1+1</td></tr></table>",
+                    "done": True,
+                }
+            )
+
+        def respond(self, data):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps(data).encode())
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with tempfile.TemporaryDirectory(prefix="LocalOCR smoke ") as name:
+            folder = Path(name)
+            image = folder / "Таблица.png"
+            Image.new("RGB", (200, 100), "white").save(image)
+            command = [
+                str(exe),
+                "convert",
+                str(image),
+                "--ollama-url",
+                f"http://127.0.0.1:{server.server_port}",
+            ]
+            result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+            # Unruled input must honestly be REVIEW, exit 1.
+            if result.returncode != 1:
+                raise RuntimeError(f"Frozen conversion failed: {result.stdout} {result.stderr}")
+            book = load_workbook(folder / "results" / "Таблица.xlsx")
+            assert book.worksheets[0]["A2"].value == "0012"
+            assert book.worksheets[0]["B2"].data_type == "s"
+            assert "Проверка" in book.sheetnames
+            book.close()
+            print("Frozen CLI, version, Unicode paths and XLSX: PASS")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()
