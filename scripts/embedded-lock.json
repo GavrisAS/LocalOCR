@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "qualification": "PENDING",
+  "engine": {
+    "tag": "b11612",
+    "commit": "10da8c463f735c7eaff904c6474e6cf38dccbe83",
+    "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11612/llama-b11612-bin-win-cpu-x64.zip",
+    "sha256": "b8456ccb1be98365a5a2227efa5c495508a6a3ebce881c6189a1dbeaaa170b69",
+    "size": 19553433
+  },
+  "models": {
+    "f16": {
+      "model": {
+        "repo": "ggml-org/GLM-OCR-GGUF",
+        "revision": "65a42de1148dbed2297e922b5dbc7d9b70c36578",
+        "filename": "GLM-OCR-f16.gguf",
+        "url": "https://huggingface.co/ggml-org/GLM-OCR-GGUF/resolve/65a42de1148dbed2297e922b5dbc7d9b70c36578/GLM-OCR-f16.gguf",
+        "sha256": "b06675e983db9593db78603b06f097e48c0cf078b37731c0a09612f4a249cf6f",
+        "size": 1785771648
+      },
+      "mmproj": {
+        "repo": "mradermacher/GLM-OCR-GGUF",
+        "revision": "11fad2c98e06d1ca82a1b5bc0c9137ee5758991b",
+        "filename": "GLM-OCR.mmproj-f16.gguf",
+        "url": "https://huggingface.co/mradermacher/GLM-OCR-GGUF/resolve/11fad2c98e06d1ca82a1b5bc0c9137ee5758991b/GLM-OCR.mmproj-f16.gguf",
+        "sha256": "fe5805b3b70f3174d25a912b8d197569eaa8e1e3e6d9777a385b8cc4c622af6c",
+        "size": 869018080
+      }
+    },
+    "q8_0": {
+      "model": {
+        "repo": "ggml-org/GLM-OCR-GGUF",
+        "revision": "65a42de1148dbed2297e922b5dbc7d9b70c36578",
+        "filename": "GLM-OCR-Q8_0.gguf",
+        "url": "https://huggingface.co/ggml-org/GLM-OCR-GGUF/resolve/65a42de1148dbed2297e922b5dbc7d9b70c36578/GLM-OCR-Q8_0.gguf",
+        "sha256": "45bc244a6446aff850521dc41f18bc8d7105ad5f0c2c8c28af04e7cc4f4d50b1",
+        "size": 950433408
+      },
+      "mmproj": {
+        "repo": "ggml-org/GLM-OCR-GGUF",
+        "revision": "65a42de1148dbed2297e922b5dbc7d9b70c36578",
+        "filename": "mmproj-GLM-OCR-Q8_0.gguf",
+        "url": "https://huggingface.co/ggml-org/GLM-OCR-GGUF/resolve/65a42de1148dbed2297e922b5dbc7d9b70c36578/mmproj-GLM-OCR-Q8_0.gguf",
+        "sha256": "9c4b58e33e316ed142eb5dcb41abec3844d3e6e5dc361ffb782c3fa9d175141f",
+        "size": 484403648
+      }
+    }
+  }
+}

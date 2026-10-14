@@ -1,7 +1,8 @@
 # LocalOCR invariants
 Python 3.14, src package, uv and committed lockfile. GUI and CLI call the same service.
-Runtime may contact only the configured local/LAN Ollama. No proxies, redirects, cloud,
-model downloads, generated code or telemetry. TLS certificates must be verified.
+Runtime may contact only the selected local/LAN Ollama, explicitly configured OpenWebUI,
+or owned loopback Embedded engine. No HTTP environment proxies, redirects, model
+downloads, generated code or telemetry. OpenWebUI tokens are plain text in user JSON. TLS certificates must be verified.
 Never infer missing values or ambiguous cell placement. Preserve source images.
 Writer consumes validated canonical tables; OCR strings never become formulas.
 Cancellation must prevent publication of unfinished workbooks. Sensitive OCR artifacts

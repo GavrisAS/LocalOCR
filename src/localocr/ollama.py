@@ -84,6 +84,8 @@ async def pinned_url(url: str) -> tuple[str, str, str]:
 
 
 class OllamaClient:
+    server_name = "Ollama"
+
     def __init__(self, settings: Settings, cancel: Event | None = None):
         settings.validate()
         self.settings = settings
@@ -93,8 +95,24 @@ class OllamaClient:
         if self.cancel.is_set():
             raise Cancelled("Обработка отменена")
 
-    async def _request_async(self, method: str, endpoint: str, payload=None):
+    async def route(self):
         base, host, sni = await pinned_url(self.settings.url)
+        return base, {"Host": host}, {"sni_hostname": sni}
+
+    def normalize_result(self, result):
+        return result
+
+    def close(self):
+        """No persistent connection or subprocess in Direct Ollama."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    async def _request_async(self, method: str, endpoint: str, payload=None):
+        base, headers, extensions = await self.route()
         deadline = time.monotonic() + self.settings.timeout
         timeout = httpx.Timeout(self.settings.timeout, connect=5, pool=5)
         async with httpx.AsyncClient(
@@ -108,38 +126,47 @@ class OllamaClient:
                             method,
                             base + endpoint,
                             json=payload,
-                            headers={"Host": host},
-                            extensions={"sni_hostname": sni},
+                            headers=headers,
+                            extensions=extensions,
                         ) as response:
                             if 300 <= response.status_code < 400:
-                                raise OCRServerError("Перенаправление Ollama запрещено")
+                                raise OCRServerError(
+                                    f"Перенаправление {self.server_name} запрещено"
+                                )
                             response.raise_for_status()
                             body = bytearray()
                             async for chunk in response.aiter_bytes():
                                 self.check_cancel()
                                 body.extend(chunk)
                                 if len(body) > 4_500_000:
-                                    raise OCRServerError("Ответ Ollama слишком большой")
+                                    raise OCRServerError(
+                                        f"Ответ {self.server_name} слишком большой"
+                                    )
                     try:
                         result = json.loads(body)
                     except (ValueError, UnicodeError) as error:
-                        raise OCRServerError("Некорректный JSON от Ollama") from error
+                        raise OCRServerError(f"Некорректный JSON от {self.server_name}") from error
+                    result = self.normalize_result(result)
                     if not isinstance(result, dict) or result.get("error"):
-                        raise OCRServerError("Ошибка API Ollama")
+                        raise OCRServerError(f"Ошибка API {self.server_name}")
                     return result
                 except (httpx.TimeoutException, TimeoutError) as error:
-                    raise OCRServerError("Истекло время ожидания Ollama") from error
+                    raise OCRServerError(f"Истекло время ожидания {self.server_name}") from error
                 except httpx.HTTPStatusError as error:
                     if error.response.status_code >= 500 and attempt < self.settings.retries:
                         await asyncio.sleep(0.2)
                         continue
-                    raise OCRServerError(f"Ollama HTTP {error.response.status_code}") from error
+                    raise OCRServerError(
+                        f"{self.server_name} HTTP {error.response.status_code}"
+                    ) from error
                 except httpx.RequestError as error:
                     if attempt < self.settings.retries:
                         await asyncio.sleep(0.2)
                         continue
-                    raise OCRServerError("Ollama недоступен: проверьте сервер и адрес") from error
-        raise OCRServerError("Ollama не ответил")
+                    raise OCRServerError(
+                        f"{self.server_name} недоступен: проверьте сервер и адрес"
+                    ) from error
+        raise OCRServerError(f"{self.server_name} не ответил")
 
     async def _cancellable(self, method, endpoint, payload):
         task = asyncio.create_task(self._request_async(method, endpoint, payload))

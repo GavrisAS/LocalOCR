@@ -12,6 +12,32 @@ from pathlib import Path
 class AppConfig:
     folder: str = ""
     ollama_url: str = "http://127.0.0.1:11434"
+    provider: str = "ollama"
+    ollama_model: str = "glm-ocr:latest"
+    openwebui_url: str = "http://127.0.0.1:8080"
+    openwebui_model: str = "glm-ocr:latest"
+    api_token: str = ""
+    openwebui_api: str = "proxy"
+    precision: str = "f16"
+
+    def settings(self, timeout=300):
+        from localocr.embedded import EmbeddedSettings
+        from localocr.ollama import Settings
+        from localocr.providers import OpenWebUISettings
+
+        if self.provider == "embedded":
+            return EmbeddedSettings(precision=self.precision, timeout=timeout)
+        if self.provider == "openwebui":
+            return OpenWebUISettings(
+                url=self.openwebui_url,
+                model=self.openwebui_model,
+                api_token=self.api_token,
+                api=self.openwebui_api,
+                timeout=timeout,
+            )
+        if self.provider == "ollama":
+            return Settings(url=self.ollama_url, model=self.ollama_model, timeout=timeout)
+        raise ValueError("Неизвестный provider")
 
 
 def config_dir() -> Path:
@@ -25,10 +51,9 @@ def load_config() -> AppConfig:
         data = json.loads((config_dir() / "config.json").read_text(encoding="utf-8"))
         if not isinstance(data, dict) or any(not isinstance(v, str) for v in data.values()):
             return AppConfig()
-        return AppConfig(
-            folder=data.get("folder", ""),
-            ollama_url=data.get("ollama_url", "http://127.0.0.1:11434"),
-        )
+        from dataclasses import fields
+
+        return AppConfig(**{f.name: data[f.name] for f in fields(AppConfig) if f.name in data})
     except OSError, ValueError:
         return AppConfig()
 

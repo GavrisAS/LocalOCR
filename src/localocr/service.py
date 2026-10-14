@@ -12,9 +12,11 @@ from pathlib import Path
 from threading import Event
 
 from localocr.domain import JobResult, StructureError, Table, TableDocument, ValidationIssue
+from localocr.embedded import EmbeddedSettings
 from localocr.excel import write_workbook
 from localocr.imaging import EXTENSIONS, Layout, detect_layout, encode, load_image, row_fragments
-from localocr.ollama import Cancelled, OCRServerError, OllamaClient, Settings
+from localocr.ollama import Cancelled, OCRServerError, Settings
+from localocr.providers import OCRProvider, OpenWebUISettings, create_provider
 from localocr.tables import parse_response
 
 LOGGER = logging.getLogger(__name__)
@@ -99,7 +101,7 @@ def assemble_fragments(parts: list[tuple[int, int, Table]], layout: Layout) -> T
     return table
 
 
-def recognize_document(image, client: OllamaClient, diagnostics: Path | None):
+def recognize_document(image, client: OCRProvider, diagnostics: Path | None):
     layouts = detect_layout(image)
     sequence = 0
 
@@ -230,7 +232,7 @@ def recognize_document(image, client: OllamaClient, diagnostics: Path | None):
 
 def convert(
     source: Path,
-    settings: Settings,
+    settings: Settings | OpenWebUISettings | EmbeddedSettings,
     output_dir: Path | None = None,
     recursive=False,
     overwrite=False,
@@ -245,72 +247,77 @@ def convert(
     if not paths:
         raise ValueError("Поддерживаемые изображения не найдены")
     cancel = cancel or Event()
-    client = OllamaClient(settings, cancel)
-    client.doctor()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    results = []
-    for index, (path, name) in enumerate(zip(paths, output_names(paths))):
-        if cancel.is_set():
-            break
-        if progress:
-            progress(index, len(paths), path.name)
-        target = output_dir / name
-        start = time.monotonic()
-        try:
-            if target.exists() and not overwrite:
-                result = JobResult(path.name, "SKIPPED", str(target), "Результат уже существует")
-            else:
-                diag = output_dir / "diagnostics" / target.stem if diagnostics else None
-                image = load_image(path)
-                document = recognize_document(image, client, diag)
-                warnings = sum(
-                    len(table.issues) + sum(len(c.warnings) for c in table.cells)
-                    for table in document.tables
+    client = create_provider(settings, cancel)
+    try:
+        client.doctor()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        results = []
+        for index, (path, name) in enumerate(zip(paths, output_names(paths))):
+            if cancel.is_set():
+                break
+            if progress:
+                progress(index, len(paths), path.name)
+            target = output_dir / name
+            start = time.monotonic()
+            try:
+                if target.exists() and not overwrite:
+                    result = JobResult(
+                        path.name, "SKIPPED", str(target), "Результат уже существует"
+                    )
+                else:
+                    diag = output_dir / "diagnostics" / target.stem if diagnostics else None
+                    image = load_image(path)
+                    document = recognize_document(image, client, diag)
+                    warnings = sum(
+                        len(table.issues) + sum(len(c.warnings) for c in table.cells)
+                        for table in document.tables
+                    )
+                    write_workbook(document, target, overwrite, cancel)
+                    result = JobResult(
+                        path.name,
+                        "REVIEW" if warnings else "SUCCESS",
+                        str(target),
+                        tables=len(document.tables),
+                        shapes=[(t.rows, t.columns) for t in document.tables],
+                        warnings=warnings,
+                    )
+            except Cancelled:
+                break
+            except Exception as error:
+                # Exception details never contain raw image/OCR content in routine logs.
+                LOGGER.error(
+                    "Image processing failed: %s (%s)\n%s",
+                    path.name,
+                    type(error).__name__,
+                    "".join(traceback.format_tb(error.__traceback__)),
                 )
-                write_workbook(document, target, overwrite, cancel)
                 result = JobResult(
                     path.name,
-                    "REVIEW" if warnings else "SUCCESS",
-                    str(target),
-                    tables=len(document.tables),
-                    shapes=[(t.rows, t.columns) for t in document.tables],
-                    warnings=warnings,
+                    "FAILED",
+                    message=str(error)
+                    if isinstance(error, (ValueError, OCRServerError, OSError))
+                    else "Ошибка обработки; см. локальный лог",
                 )
-        except Cancelled:
-            break
-        except Exception as error:
-            # Exception details never contain raw image/OCR content in routine logs.
-            LOGGER.error(
-                "Image processing failed: %s (%s)\n%s",
+            result.seconds = round(time.monotonic() - start, 3)
+            results.append(result)
+            LOGGER.info(
+                "%s: %s tables=%s shapes=%s warnings=%s seconds=%s",
                 path.name,
-                type(error).__name__,
-                "".join(traceback.format_tb(error.__traceback__)),
+                result.status,
+                result.tables,
+                result.shapes,
+                result.warnings,
+                result.seconds,
             )
-            result = JobResult(
-                path.name,
-                "FAILED",
-                message=str(error)
-                if isinstance(error, (ValueError, OCRServerError, OSError))
-                else "Ошибка обработки; см. локальный лог",
-            )
-        result.seconds = round(time.monotonic() - start, 3)
-        results.append(result)
-        LOGGER.info(
-            "%s: %s tables=%s shapes=%s warnings=%s seconds=%s",
-            path.name,
-            result.status,
-            result.tables,
-            result.shapes,
-            result.warnings,
-            result.seconds,
-        )
-        if progress:
-            progress(index + 1, len(paths), f"{path.name}: {result.status}")
-    report = {
-        "cancelled": cancel.is_set(),
-        "discovered": len(paths),
-        "results": [asdict(result) for result in results],
-    }
-    report_path = output_dir / f"report-{time.time_ns()}.json"
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    return results
+            if progress:
+                progress(index + 1, len(paths), f"{path.name}: {result.status}")
+        report = {
+            "cancelled": cancel.is_set(),
+            "discovered": len(paths),
+            "results": [asdict(result) for result in results],
+        }
+        report_path = output_dir / f"report-{time.time_ns()}.json"
+        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        return results
+    finally:
+        client.close()

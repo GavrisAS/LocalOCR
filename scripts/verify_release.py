@@ -10,6 +10,11 @@ import zipfile
 from pathlib import Path
 
 
+def file_digest(path: Path):
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
 def verify(metadata, folder: Path, tag: str, sha: str, resolved_sha: str):
     name = f"LocalOCR-{tag}-windows-x64.zip"
     if resolved_sha != sha or metadata["tagName"] != tag:
@@ -19,18 +24,41 @@ def verify(metadata, folder: Path, tag: str, sha: str, resolved_sha: str):
     if metadata["name"] != f"LocalOCR {tag} candidate":
         raise ValueError("Release title mismatch")
     assets = {asset["name"]: asset for asset in metadata["assets"]}
-    if len(metadata["assets"]) != 2 or set(assets) != {name, name + ".sha256"}:
+    if "release-manifest.json" in assets:
+        descriptor = json.loads((folder / "release-manifest.json").read_text(encoding="utf-8"))
+        if descriptor.get("tag") != tag or descriptor.get("sha") != sha:
+            raise ValueError("Manifest tag/SHA mismatch")
+        expected = descriptor.get("assets", {})
+        if not isinstance(expected, dict) or set(assets) != set(expected) | {
+            "release-manifest.json"
+        }:
+            raise ValueError("Manifest asset set mismatch")
+        if len(metadata["assets"]) != len(assets):
+            raise ValueError("Duplicate assets")
+        for filename, item in expected.items():
+            if Path(filename).name != filename or "\\" in filename:
+                raise ValueError("Unsafe asset path")
+            path = folder / filename
+            if (
+                path.stat().st_size != item["size"]
+                or file_digest(path) != item["sha256"]
+                or path.stat().st_size >= 2 * 1024**3
+            ):
+                raise ValueError("Manifest asset size/digest mismatch")
+        if name not in expected or name + ".sha256" not in expected:
+            raise ValueError("Lite assets missing")
+    elif len(metadata["assets"]) != 2 or set(assets) != {name, name + ".sha256"}:
         raise ValueError("Missing/unexpected/duplicate assets")
     for filename, asset in assets.items():
-        data = (folder / filename).read_bytes()
-        if not data or asset["size"] != len(data):
+        path = folder / filename
+        if not path.stat().st_size or asset["size"] != path.stat().st_size:
             raise ValueError("Asset size mismatch")
-        digest = "sha256:" + hashlib.sha256(data).hexdigest()
+        digest = "sha256:" + file_digest(path)
         if asset.get("digest") != digest:
             raise ValueError("GitHub asset digest mismatch or absent")
     checksum = (folder / (name + ".sha256")).read_text("ascii").strip()
     match = re.fullmatch(r"([0-9a-f]{64})  " + re.escape(name), checksum)
-    if not match or match[1] != hashlib.sha256((folder / name).read_bytes()).hexdigest():
+    if not match or match[1] != file_digest(folder / name):
         raise ValueError("Malformed checksum or ZIP digest mismatch")
     with zipfile.ZipFile(folder / name) as archive:
         if archive.testzip() is not None:
@@ -131,6 +159,37 @@ def main():
             check=True,
             timeout=30,
         )
+        if (folder / "portable-manifest.json").is_file():
+            descriptor = json.loads((folder / "portable-manifest.json").read_text())
+            if descriptor.get("tag") != args.tag or descriptor.get("sha") != args.sha:
+                raise ValueError("Portable identity mismatch")
+            destination = folder / "assembled"
+            subprocess.run(
+                [
+                    "pwsh",
+                    "-NoProfile",
+                    "-File",
+                    str(folder / "assemble_portable.ps1"),
+                    "-Destination",
+                    str(destination),
+                ],
+                check=True,
+            )
+            subprocess.run(
+                [
+                    "pwsh",
+                    "-NoProfile",
+                    "-File",
+                    "scripts/qualify_windows.ps1",
+                    "-Root",
+                    str(destination / "LocalOCR"),
+                    "-Output",
+                    str(folder / "published-qualification.json"),
+                    "-Sha",
+                    args.sha,
+                ],
+                check=True,
+            )
     print("Immutable existing release verified: PASS")
 
 

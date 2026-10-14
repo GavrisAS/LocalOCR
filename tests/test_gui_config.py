@@ -78,3 +78,32 @@ def test_gui_batch_progress_results(server, tmp_path, monkeypatch):
     assert (tmp_path / "results" / "input.xlsx").exists()
     assert window.start.isEnabled()
     window.close()
+
+
+def test_gui_backend_fields_persist_independently(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    app = QApplication.instance() or QApplication([])
+    window = Window()
+    window.show()
+    window.url.setText("http://192.168.1.2:11434")
+    window.model.setText("direct-model")
+    window.provider.setCurrentIndex(window.provider.findData("openwebui"))
+    app.processEvents()
+    assert window.token.isVisible() and not window.url.isVisible()
+    window.web_url.setText("https://corporate.example/prefix")
+    window.web_model.setText("chat-model")
+    window.token.setText("fixture-plain-token")
+    window.api.setCurrentIndex(window.api.findData("chat"))
+    window.provider.setCurrentIndex(window.provider.findData("embedded"))
+    app.processEvents()
+    assert window.precision.isVisible() and not window.token.isVisible()
+    window.close()
+    restored = Window()
+    assert restored.provider.currentData() == "embedded"
+    assert restored.url.text() == "http://192.168.1.2:11434"
+    assert restored.model.text() == "direct-model"
+    assert restored.web_model.text() == "chat-model"
+    assert restored.token.text() == "fixture-plain-token"
+    assert restored.api.currentData() == "chat"
+    restored.close()

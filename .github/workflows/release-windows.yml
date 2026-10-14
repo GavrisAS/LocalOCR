@@ -62,12 +62,51 @@ jobs:
       - run: uv python install 3.14
       - shell: pwsh
         run: ./scripts/build_windows.ps1 -BuildVersion '${{ needs.reserve.outputs.version }}'
+      - name: Prepare release assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/release | Out-Null
+          Copy-Item dist/LocalOCR-v*-windows-x64.zip dist/release/
+          Copy-Item dist/*.sha256 dist/release/
+          Copy-Item docs/RELEASE_NOTES.md dist/release-notes.md
+      - name: Real Windows F16 qualification and Portable packaging
+        if: github.run_attempt == 1
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          try {
+            uv run python scripts/prepare_embedded.py --output dist/LocalOCR/embedded --precision f16
+            if ($LASTEXITCODE -ne 0) { throw 'Pinned F16 installation failed' }
+            ./scripts/qualify_windows.ps1 -Root dist/LocalOCR -Output dist/f16-qualification.json -Sha '${{ github.sha }}'
+            uv run python scripts/package_portable.py --root dist/LocalOCR --output dist/portable-assets --tag '${{ needs.reserve.outputs.tag }}' --sha '${{ github.sha }}' --evidence dist/f16-qualification.json
+            if ($LASTEXITCODE -ne 0) { throw 'Portable qualification gate failed' }
+            ./dist/portable-assets/assemble_portable.ps1 -Destination dist/assembled-validation
+            ./scripts/qualify_windows.ps1 -Root dist/assembled-validation/LocalOCR -Output dist/assembled-qualification.json -Sha '${{ github.sha }}'
+            Remove-Item dist/assembled-validation -Recurse -Force
+            Copy-Item dist/portable-assets/* dist/release/
+            Add-Content dist/release-notes.md "`nPortable F16: Windows CPU synthetic 3/30 rows PASS; assembled split assets included."
+          } catch {
+            Write-Warning $_
+            if (-not (Test-Path dist/f16-qualification.json)) {
+              @{ status = 'PENDING'; platform = 'win32'; error = "$($_.Exception.Message)" } | ConvertTo-Json | Set-Content dist/f16-qualification.json
+            }
+            Add-Content dist/release-notes.md "`nPortable F16: PENDING/FAILED qualification; no Portable assets published. Lite remains available. See workflow qualification evidence."
+          }
+          exit 0
+      - name: Exact release manifest
+        shell: pwsh
+        run: |
+          uv run python scripts/release_manifest.py --folder dist/release --tag '${{ needs.reserve.outputs.tag }}' --sha '${{ github.sha }}'
+          if ($LASTEXITCODE -ne 0) { throw 'Asset manifest failed' }
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: windows-distribution-attempt-${{ github.run_attempt }}
           path: |
-            dist/LocalOCR-v*-windows-x64.zip
-            dist/*.sha256
+            dist/release/*
+            dist/f16-qualification.json
+            dist/assembled-qualification.json
+            dist/LocalOCR/embedded/manifest.json
       - env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
@@ -78,7 +117,7 @@ jobs:
           uv run python scripts/verify_release.py @verifyArgs
           if ($LASTEXITCODE -eq 0) { exit 0 }
           if ($LASTEXITCODE -ne 3) { throw 'Existing release verification failed; immutable assets unchanged' }
-          gh release create $tag dist/LocalOCR-v*-windows-x64.zip dist/*.sha256 --verify-tag --prerelease --title "LocalOCR $tag candidate" --notes-file docs/RELEASE_NOTES.md
+          gh release create $tag dist/release/* --verify-tag --prerelease --title "LocalOCR $tag candidate" --notes-file dist/release-notes.md
           if ($LASTEXITCODE -ne 0) { throw 'Release failed' }
           uv run python scripts/verify_release.py --tag $tag --sha '${{ github.sha }}' --require-existing
           if ($LASTEXITCODE -ne 0) { throw 'Published release verification failed' }

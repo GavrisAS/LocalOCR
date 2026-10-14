@@ -12,3 +12,10 @@ Candidate: текст OCR и сложная геометрия требуют н
 сохранение десятичной разрядности и оригинального текста в XLSX comments,
 строгая immutable release verification и локальный manual-gold quality workflow.
 Exclusive output требует hardlinks; FAT/exFAT не поддерживаются этим режимом.
+
+Provider candidate: Direct Ollama, OpenWebUI Ollama Proxy/Chat Completions and
+managed local GLM-OCR llama-server. OpenWebUI token is plain text in user JSON.
+Lite contains no model. Portable F16 is included only after real Windows CPU
+vision qualification; when included, assemble all split assets locally with the
+supplied PowerShell script to run on a disconnected PC. No runtime downloads.
+OpenWebUI live connection and historical human OCR gold remain PENDING.

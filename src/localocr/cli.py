@@ -7,8 +7,10 @@ from typing import Annotated
 import typer
 
 from localocr import __version__, build_commit
-from localocr.config import setup_logging
-from localocr.ollama import OCRServerError, OllamaClient, Settings
+from localocr.config import load_config, setup_logging
+from localocr.embedded import EmbeddedSettings
+from localocr.ollama import OCRServerError
+from localocr.providers import create_provider
 from localocr.service import convert as run_convert
 
 app = typer.Typer(no_args_is_help=True)
@@ -27,23 +29,101 @@ def callback(
         raise typer.Exit()
 
 
+def selected_settings(
+    provider,
+    ollama_url,
+    url,
+    model,
+    api_token,
+    openwebui_api,
+    precision,
+    engine,
+    model_path,
+    mmproj_path,
+    use_config,
+    timeout=300,
+):
+    from localocr.config import AppConfig
+
+    config = load_config() if use_config else AppConfig()
+    config.provider = provider or config.provider
+    if config.provider == "ollama":
+        config.ollama_url = url or ollama_url or config.ollama_url
+        config.ollama_model = model or config.ollama_model
+    elif config.provider == "openwebui":
+        config.openwebui_url = url or config.openwebui_url
+        config.openwebui_model = model or config.openwebui_model
+        config.api_token = config.api_token if api_token is None else api_token
+        config.openwebui_api = openwebui_api or config.openwebui_api
+    elif config.provider == "embedded":
+        return EmbeddedSettings(
+            precision=precision or config.precision,
+            engine=engine,
+            model_path=model_path,
+            mmproj_path=mmproj_path,
+            timeout=timeout,
+        )
+    return config.settings(timeout)
+
+
 @app.command()
-def doctor(ollama_url: str = "http://127.0.0.1:11434", model: str = "glm-ocr:latest"):
+def doctor(
+    ollama_url: str | None = None,
+    model: str | None = None,
+    provider: str | None = None,
+    url: str | None = None,
+    api_token: str | None = None,
+    openwebui_api: str | None = None,
+    precision: str | None = None,
+    engine: Path | None = None,
+    model_path: Path | None = None,
+    mmproj_path: Path | None = None,
+    use_config: bool = False,
+):
+    client = None
     try:
-        typer.echo(OllamaClient(Settings(url=ollama_url, model=model)).doctor())
+        settings = selected_settings(
+            provider,
+            ollama_url,
+            url,
+            model,
+            api_token,
+            openwebui_api,
+            precision,
+            engine,
+            model_path,
+            mmproj_path,
+            use_config,
+        )
+        client = create_provider(settings)
+        typer.echo(client.doctor())
     except (ValueError, OSError) as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(2) from error
     except OCRServerError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(3) from error
+    except KeyboardInterrupt as error:
+        raise typer.Exit(130) from error
+    finally:
+        if client is not None:
+            client.close()
 
 
 @app.command()
 def convert(
     source: Path,
-    ollama_url: str = "http://127.0.0.1:11434",
-    model: str = "glm-ocr:latest",
+    ollama_url: str | None = None,
+    model: str | None = None,
+    provider: str | None = None,
+    url: str | None = None,
+    api_token: str | None = None,
+    openwebui_api: str | None = None,
+    precision: str | None = None,
+    engine: Path | None = None,
+    model_path: Path | None = None,
+    mmproj_path: Path | None = None,
+    use_config: bool = False,
     output_dir: Path | None = None,
     recursive: bool = False,
     overwrite: bool = False,
@@ -54,7 +134,20 @@ def convert(
     try:
         results = run_convert(
             source,
-            Settings(ollama_url, model, timeout),
+            selected_settings(
+                provider,
+                ollama_url,
+                url,
+                model,
+                api_token,
+                openwebui_api,
+                precision,
+                engine,
+                model_path,
+                mmproj_path,
+                use_config,
+                timeout,
+            ),
             output_dir,
             recursive,
             overwrite,

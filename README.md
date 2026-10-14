@@ -85,3 +85,9 @@ EXIF orientation и небольшой наклон нормализуются. 
 4 МБ OCR-текста / 4.5 МБ HTTP-ответа, 32767 символов в ячейке Excel.
 
 Архитектура, тесты и выпуск: [docs](docs/ARCHITECTURE.md).
+
+## Embedded / OpenWebUI
+
+Три режима, CLI flags, plain text config и offline-сборка Portable описаны в
+[EMBEDDED_OPENWEBUI.md](docs/EMBEDDED_OPENWEBUI.md). Lite не содержит модель.
+Portable F16 распространяется только после real Windows vision qualification.
