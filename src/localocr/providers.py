@@ -100,11 +100,15 @@ class OpenWebUIChatProvider(OpenWebUIOllamaProxyProvider):
         return f"Подключено · {self.settings.model}{suffix}"
 
     def recognize(self, image: bytes, *, single_table: bool = False) -> str:
-        data = self.request("POST", "/api/chat/completions", chat_payload(self.settings, image))
-        return chat_text(data)
+        data = self.request(
+            "POST",
+            "/api/chat/completions",
+            chat_payload(self.settings, image, single_table=single_table),
+        )
+        return chat_text(data, single_table=single_table)
 
 
-def chat_payload(settings, image: bytes):
+def chat_payload(settings, image: bytes, *, single_table=False):
     mime = "image/jpeg" if image.startswith(b"\xff\xd8\xff") else "image/png"
     return {
         "model": settings.model,
@@ -125,10 +129,11 @@ def chat_payload(settings, image: bytes):
         "stream": False,
         "temperature": 0,
         "max_tokens": settings.num_predict,
+        **({"stop": ["</table>"]} if single_table else {}),
     }
 
 
-def chat_text(data) -> str:
+def chat_text(data, *, single_table=False) -> str:
     try:
         choice = data["choices"][0]
         text = choice["message"]["content"]
@@ -136,6 +141,14 @@ def chat_text(data) -> str:
             raise OCRServerError("Усечённый ответ OCR; требуется меньший фрагмент")
         if not isinstance(text, str) or not text.strip():
             raise OCRServerError("Пустой OCR-ответ")
+        if (
+            single_table
+            and choice.get("finish_reason") == "stop"
+            and "<table" in text.lower()
+            and "</table>" not in text.lower()
+        ):
+            # Restore only the requested stop delimiter, never rows or cell values.
+            text += "</table>"
         return text
     except (KeyError, IndexError, TypeError) as error:
         raise OCRServerError("Некорректный Chat Completions OCR-ответ") from error

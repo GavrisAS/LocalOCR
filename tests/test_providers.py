@@ -237,3 +237,27 @@ def test_shared_pipeline_fidelity_across_server_adapters(tmp_path, monkeypatch):
     cells = actual[0]["tables"][0]["cells"]
     assert cells[0]["value"] == "0012" and cells[2]["type"] == "s"
     assert cells[1]["number_format"] == "0.00"
+
+
+def test_chat_single_table_stops_at_closed_table(monkeypatch):
+    from localocr.tables import parse_response
+
+    requests = []
+    original = httpx.AsyncClient
+    text = "<table><tr><td>0012</td></tr>"
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": text}, "finish_reason": "stop"}]}
+        )
+
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kw: original(transport=httpx.MockTransport(handler), **kw)
+    )
+    client = create_provider(OpenWebUISettings(api="chat"))
+    result = client.recognize(b"image", single_table=True)
+    assert requests[-1]["stop"] == ["</table>"]
+    assert parse_response(result).tables[0].cells[0].text == "0012"
+    client.recognize(b"image", single_table=False)
+    assert "stop" not in requests[-1]

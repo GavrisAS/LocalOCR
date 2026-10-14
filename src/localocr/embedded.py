@@ -194,7 +194,12 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
         self.doctor()
         try:
             return chat_text(
-                self.request("POST", "/v1/chat/completions", chat_payload(self.settings, image))
+                self.request(
+                    "POST",
+                    "/v1/chat/completions",
+                    chat_payload(self.settings, image, single_table=single_table),
+                ),
+                single_table=single_table,
             )
         except BaseException:
             self.close()

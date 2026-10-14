@@ -152,3 +152,9 @@ qualification имеет FAIL/WinError 5 при cleanup DLL, затем build ca
 runner/control/прочие процессы сохраняют сеть. Перенос выполняется до firewall,
 повторная скрытая relocation исключена; cleanup не маскирует первичную ошибку.
 Это не Windows F16 PASS. Итоговый qualification evidence остаётся обязательным.
+
+Chat/Embedded теперь учитывают single_table и запрашивают stop </table>, как
+Native Ollama: не продолжают генерацию после одной найденной таблицы.
+Восстанавливается только запрошенный delimiter после finish_reason=stop,
+никогда строки/значения; Markdown не изменяется. Regression и real Linux F16
+3×3: 9/9 cells PASS; итоговая локальная suite 183 PASS.
