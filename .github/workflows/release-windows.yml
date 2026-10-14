@@ -57,7 +57,7 @@ jobs:
         run: ./scripts/build_windows.ps1 -BuildVersion '${{ needs.reserve.outputs.version }}'
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-distribution
+          name: windows-distribution-attempt-${{ github.run_attempt }}
           path: |
             dist/LocalOCR-v*-windows-x64.zip
             dist/*.sha256
