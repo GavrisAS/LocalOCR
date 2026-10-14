@@ -1,9 +1,9 @@
 [build-system]
-requires = ["uv_build>=0.12,<0.14"]
-build-backend = "uv_build"
+requires = ["hatchling>=1.27", "hatch-vcs>=0.5"]
+build-backend = "hatchling.build"
 [project]
 name = "localocr"
-version = "0.1"
+dynamic = ["version"]
 description = "Offline image tables to Excel through local Ollama"
 requires-python = ">=3.14,<3.15"
 dependencies = ["PySide6-Essentials>=6.10", "httpx>=0.28", "Pillow>=12", "opencv-python-headless>=4.13", "openpyxl>=3.1.5", "typer>=0.20"]
@@ -26,3 +26,14 @@ testpaths = ["tests"]
 addopts = "-ra"
 [tool.ty.src]
 exclude = ["ocr_glm.py", "prepare_table.py", "assemble_table.py", "outputs"]
+
+[tool.hatch.version]
+source = "vcs"
+[tool.hatch.version.raw-options]
+version_scheme = "only-version"
+local_scheme = "node-and-date"
+fallback_version = "0.0.dev0"
+[tool.hatch.build.targets.wheel]
+packages = ["src/localocr"]
+[tool.hatch.build.hooks.vcs]
+version-file = "src/localocr/_package_version.py"

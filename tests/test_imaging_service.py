@@ -99,7 +99,7 @@ def test_cli_batch_unicode_collisions_errors(server, tmp_path, monkeypatch):
     )
     assert result.exit_code == 0, result.output
     assert (tmp_path / "single" / "таблица.xlsx").exists()
-    assert runner.invoke(app, ["--version"]).output.strip() == "0.1"
+    assert runner.invoke(app, ["--version"]).output.strip() == __import__("localocr").__version__
     assert runner.invoke(app, ["--help"]).exit_code == 0
     assert runner.invoke(app, ["doctor", "--ollama-url", url]).exit_code == 0
     assert (

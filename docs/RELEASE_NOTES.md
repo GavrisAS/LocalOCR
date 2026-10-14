@@ -7,3 +7,8 @@ LocalOCR/LocalOCR-CLI/LocalOCR-CLI.exe. Python/Excel/uv/Codex не нужны.
 Candidate: текст OCR и сложная геометрия требуют независимой сверки.
 Слабые линии и объединения на границе длинных фрагментов могут дать REVIEW/FAILED.
 Не заявляется production-ready или измеренный процент точности.
+
+Корректирующий пакет после v0.4: единая VCS identity source/package/frozen,
+сохранение десятичной разрядности и оригинального текста в XLSX comments,
+строгая immutable release verification и локальный manual-gold quality workflow.
+Exclusive output требует hardlinks; FAT/exFAT не поддерживаются этим режимом.

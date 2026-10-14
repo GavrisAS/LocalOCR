@@ -16,11 +16,17 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", required=True, type=Path)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--commit")
     args = parser.parse_args()
     exe = args.exe.resolve()
     version = subprocess.check_output([str(exe), "--version"], text=True, encoding="utf-8").strip()
     if version != args.version:
         raise RuntimeError(f"Frozen version mismatch: {version}")
+
+    if args.commit:
+        commit = subprocess.check_output([str(exe), "--build-commit"], text=True).strip()
+        if commit != args.commit:
+            raise RuntimeError(f"Frozen commit mismatch: {commit}")
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args):

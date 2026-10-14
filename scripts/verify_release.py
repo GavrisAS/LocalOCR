@@ -1,0 +1,126 @@
+"""Verify immutable candidate assets; network operations only in CI tooling."""
+
+import argparse
+import hashlib
+import json
+import re
+import subprocess
+import tempfile
+import zipfile
+from pathlib import Path
+
+
+def verify(metadata, folder: Path, tag: str, sha: str, resolved_sha: str):
+    name = f"LocalOCR-{tag}-windows-x64.zip"
+    if resolved_sha != sha or metadata["tagName"] != tag:
+        raise ValueError("Tag/SHA mismatch")
+    if not metadata["isPrerelease"] or metadata["isDraft"]:
+        raise ValueError("Expected published prerelease")
+    if metadata["name"] != f"LocalOCR {tag} candidate":
+        raise ValueError("Release title mismatch")
+    assets = {asset["name"]: asset for asset in metadata["assets"]}
+    if len(metadata["assets"]) != 2 or set(assets) != {name, name + ".sha256"}:
+        raise ValueError("Missing/unexpected/duplicate assets")
+    for filename, asset in assets.items():
+        data = (folder / filename).read_bytes()
+        if not data or asset["size"] != len(data):
+            raise ValueError("Asset size mismatch")
+        digest = "sha256:" + hashlib.sha256(data).hexdigest()
+        if asset.get("digest") != digest:
+            raise ValueError("GitHub asset digest mismatch or absent")
+    checksum = (folder / (name + ".sha256")).read_text("ascii").strip()
+    match = re.fullmatch(r"([0-9a-f]{64})  " + re.escape(name), checksum)
+    if not match or match[1] != hashlib.sha256((folder / name).read_bytes()).hexdigest():
+        raise ValueError("Malformed checksum or ZIP digest mismatch")
+    with zipfile.ZipFile(folder / name) as archive:
+        if archive.testzip() is not None:
+            raise ValueError("Corrupt ZIP")
+        for entry in archive.infolist():
+            if ".." in Path(entry.filename).parts or Path(entry.filename).is_absolute():
+                raise ValueError("Unsafe ZIP path")
+        required = {"LocalOCR/LocalOCR.exe", "LocalOCR/LocalOCR-CLI/LocalOCR-CLI.exe"}
+        if not required.issubset(archive.namelist()):
+            raise ValueError("Frozen binaries missing")
+    return name
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--tag", required=True)
+    parser.add_argument("--sha", required=True)
+    args = parser.parse_args()
+    # Distinguish an absent release from authentication/network errors.
+    releases = json.loads(
+        subprocess.check_output(
+            ["gh", "api", "--paginate", "--slurp", "repos/{owner}/{repo}/releases"], text=True
+        )
+    )
+    found = [release for page in releases for release in page if release["tag_name"] == args.tag]
+    if not found:
+        raise SystemExit(3)  # caller may create only an absent release
+    metadata = json.loads(
+        subprocess.check_output(
+            [
+                "gh",
+                "release",
+                "view",
+                args.tag,
+                "--json",
+                "tagName,isPrerelease,isDraft,name,assets",
+            ],
+            text=True,
+        )
+    )
+    remote = json.loads(
+        subprocess.check_output(
+            ["gh", "api", "repos/{owner}/{repo}/git/ref/tags/" + args.tag], text=True
+        )
+    )["object"]
+    while remote["type"] == "tag":
+        remote = json.loads(
+            subprocess.check_output(
+                ["gh", "api", "repos/{owner}/{repo}/git/tags/" + remote["sha"]], text=True
+            )
+        )["object"]
+    if remote["type"] != "commit" or remote["sha"] != args.sha:
+        raise ValueError("Remote tag SHA mismatch")
+    sha = subprocess.check_output(["git", "rev-list", "-n", "1", args.tag], text=True).strip()
+    with tempfile.TemporaryDirectory() as temporary:
+        folder = Path(temporary)
+        subprocess.run(["gh", "release", "download", args.tag, "--dir", str(folder)], check=True)
+        name = verify(metadata, folder, args.tag, args.sha, sha)
+        with zipfile.ZipFile(folder / name) as archive:
+            archive.extractall(folder / "extracted")
+        exe = folder / "extracted/LocalOCR/LocalOCR-CLI/LocalOCR-CLI.exe"
+        subprocess.run(
+            [
+                "uv",
+                "run",
+                "python",
+                "scripts/frozen_smoke.py",
+                "--exe",
+                str(exe),
+                "--version",
+                args.tag[1:],
+                "--commit",
+                args.sha,
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                str(folder / "extracted/LocalOCR/LocalOCR.exe"),
+                "--smoke-test",
+                "--expected-version",
+                args.tag[1:],
+                "--expected-commit",
+                args.sha,
+            ],
+            check=True,
+            timeout=30,
+        )
+    print("Immutable existing release verified: PASS")
+
+
+if __name__ == "__main__":
+    main()

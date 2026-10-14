@@ -101,3 +101,70 @@ def test_review_text_cannot_be_formula(tmp_path):
     assert all(cell.data_type != "f" for sheet in book for row in sheet for cell in row)
     assert book["Проверка"]["D2"].value == "=2+2"
     book.close()
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["5,50", "5,70", "9,60", "7,00", "24,00", "0,5", "0012", "2590-254", "1e4", "01.02", "=1+1"],
+)
+def test_printed_fidelity(tmp_path, text):
+    path = tmp_path / "fidelity.xlsx"
+    write_workbook(TableDocument([Table([Cell(0, 0, text)], 1, 1)]), path)
+    book = load_workbook(path)
+    cell = book.active["A1"]
+    assert cell.comment.text == text
+    if "," in text:
+        places = len(text.split(",")[1])
+        assert cell.data_type == "n"
+        assert cell.number_format == "0." + "0" * places
+        assert f"{cell.value:.{places}f}".replace(".", ",") == text
+    else:
+        assert cell.value == text and cell.data_type == "s"
+    book.close()
+
+
+def test_hardlink_failure_and_race(tmp_path, monkeypatch):
+    import os
+
+    doc = TableDocument([Table([Cell(0, 0, "x")], 1, 1)])
+    path = tmp_path / "result.xlsx"
+
+    def unsupported(*args):
+        raise OSError("unsupported")
+
+    monkeypatch.setattr(os, "link", unsupported)
+    with pytest.raises(OSError, match="hardlinks unsupported"):
+        write_workbook(doc, path)
+    assert not path.exists() and not list(tmp_path.glob(".localocr-*"))
+
+    def race(*args):
+        path.write_bytes(b"competitor")
+        raise FileExistsError()
+
+    monkeypatch.setattr(os, "link", race)
+    with pytest.raises(FileExistsError):
+        write_workbook(doc, path)
+    assert path.read_bytes() == b"competitor"
+    assert not list(tmp_path.glob(".localocr-*"))
+
+
+def test_overwrite_cancel_and_replace_failure(tmp_path, monkeypatch):
+    import os
+
+    path = tmp_path / "existing.xlsx"
+    path.write_bytes(b"original")
+    doc = TableDocument([Table([Cell(0, 0, "x")], 1, 1)])
+    cancel = Event()
+    cancel.set()
+    with pytest.raises(Cancelled):
+        write_workbook(doc, path, overwrite=True, cancel=cancel)
+    assert path.read_bytes() == b"original"
+
+    def denied(*args):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(os, "replace", denied)
+    with pytest.raises(PermissionError):
+        write_workbook(doc, path, overwrite=True)
+    assert path.read_bytes() == b"original"
+    assert not list(tmp_path.glob(".localocr-*"))

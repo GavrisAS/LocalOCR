@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from localocr import __version__
+from localocr import __version__, build_commit
 from localocr.config import AppConfig, load_config, save_config, setup_logging
 from localocr.ollama import Cancelled, OllamaClient, Settings
 from localocr.service import convert
@@ -192,6 +192,11 @@ def main():
     if "--smoke-test" in sys.argv:
         index = sys.argv.index("--expected-version") if "--expected-version" in sys.argv else -1
         if index >= 0 and sys.argv[index + 1] != __version__:
+            return 2
+        commit_index = (
+            sys.argv.index("--expected-commit") if "--expected-commit" in sys.argv else -1
+        )
+        if commit_index >= 0 and sys.argv[commit_index + 1] != build_commit():
             return 2
         QTimer.singleShot(300, window.close)
         QTimer.singleShot(500, app.quit)

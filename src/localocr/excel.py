@@ -4,11 +4,13 @@ import math
 import os
 import re
 import tempfile
+from decimal import Decimal
 from pathlib import Path
 from threading import Event
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
@@ -18,10 +20,15 @@ from localocr.ollama import Cancelled
 
 def value(text: str):
     if re.fullmatch(r"-?(?:0|[1-9]\d{0,14})", text):
-        return int(text)
+        return int(text) if text != "-0" else text
     if re.fullmatch(r"-?(?:0|[1-9]\d{0,12})[,.]\d{1,8}", text):
         number = float(text.replace(",", "."))
-        if math.isfinite(number):
+        if (
+            math.isfinite(number)
+            and len(text.replace("-", "").replace(",", "").replace(".", "")) <= 15
+            and Decimal(str(number)) == Decimal(text.replace(",", "."))
+            and not (number == 0 and text.startswith("-"))
+        ):
             return number
     return text
 
@@ -43,6 +50,12 @@ def write_workbook(
                     "Текст ячейки не помещается в Excel или содержит control characters"
                 )
             target.value = value(cell.text)
+            target.comment = Comment(cell.text, "LocalOCR original OCR text")
+            if isinstance(target.value, int):
+                target.number_format = "0"
+            if isinstance(target.value, float):
+                decimals = len(re.split(r"[,.]", cell.text)[1])
+                target.number_format = "0." + "0" * decimals
             if isinstance(target.value, str):
                 target.data_type = "s"
             target.font = Font(bold=cell.is_header)
@@ -100,7 +113,15 @@ def write_workbook(
         if overwrite:
             os.replace(temporary, path)
         else:
-            # Atomic exclusive publication on NTFS/POSIX, including competing jobs.
-            os.link(temporary, path)
+            # Exclusive atomic publication requires hardlink support; never copy to final name.
+            try:
+                os.link(temporary, path)
+            except FileExistsError:
+                raise
+            except OSError as error:
+                raise OSError(
+                    "Atomic exclusive publication failed: hardlinks unsupported or access denied; "
+                    "choose a supported directory (no incomplete output published)"
+                ) from error
     finally:
         Path(temporary).unlink(missing_ok=True)

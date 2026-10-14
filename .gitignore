@@ -25,3 +25,5 @@ prepare_table.py
 assemble_table.py
 src/localocr/_build_version.py
 .evidence/
+
+src/localocr/_package_version.py

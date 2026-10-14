@@ -6,7 +6,7 @@ from typing import Annotated
 
 import typer
 
-from localocr import __version__
+from localocr import __version__, build_commit
 from localocr.config import setup_logging
 from localocr.ollama import OCRServerError, OllamaClient, Settings
 from localocr.service import convert as run_convert
@@ -15,7 +15,13 @@ app = typer.Typer(no_args_is_help=True)
 
 
 @app.callback(invoke_without_command=True)
-def callback(version: Annotated[bool, typer.Option("--version", is_eager=True)] = False):
+def callback(
+    version: Annotated[bool, typer.Option("--version", is_eager=True)] = False,
+    commit: Annotated[bool, typer.Option("--build-commit", is_eager=True)] = False,
+):
+    if commit:
+        typer.echo(build_commit())
+        raise typer.Exit()
     if version:
         typer.echo(__version__)
         raise typer.Exit()
