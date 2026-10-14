@@ -19,6 +19,10 @@ def select_tag(tags: dict[str, str], sha: str, before: str, major: int) -> str |
         return existing[0]
     if before != "0" * 40 and before not in valid.values():
         return None  # predecessor push has not reserved yet; never approximate
+    if before != "0" * 40 and valid:
+        latest = max(valid, key=lambda name: parse_tag(name) or (-1, -1))
+        if valid[latest] != before:
+            raise ValueError("Remote reservations do not follow the push predecessor")
     versions = [parse_tag(name) for name in valid]
     if any(version and version[0] > major for version in versions):
         raise ValueError("Major downgrade prohibited")

@@ -79,7 +79,7 @@ def detect_layout(image: Image.Image) -> list[Layout]:
         if w < width * 0.15 or h < 30:
             continue
         xs = centers(np.count_nonzero(vertical[y : y + h, x : x + w], axis=0) >= h * 0.35)
-        ys = centers(np.count_nonzero(horizontal[y : y + h, x : x + w], axis=1) >= w * 0.35)
+        ys = centers(np.count_nonzero(horizontal[y : y + h, x : x + w], axis=1) >= w * 0.15)
         if len(xs) >= 2 and len(ys) >= 2:
             layouts.append(Layout((x, y, x + w, y + h), [x + v for v in xs], [y + v for v in ys]))
     return sorted(layouts, key=lambda layout: (layout.region[1], layout.region[0]))

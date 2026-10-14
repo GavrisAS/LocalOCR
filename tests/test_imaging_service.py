@@ -133,7 +133,7 @@ def test_long_table_recovery(server, tmp_path):
 
     original = OllamaClient.recognize
 
-    def recognize(self, encoded):
+    def recognize(self, encoded, *, single_table=False):
         import io
 
         crop = Image.open(io.BytesIO(encoded))
@@ -150,3 +150,52 @@ def test_long_table_recovery(server, tmp_path):
     assert results[0].status == "SUCCESS"
     assert results[0].shapes == [(50, 2)]
     assert original is not None
+
+
+def test_partial_line_multilevel_header():
+    # Internal header separator spans only two of ten columns.
+    image = synthetic(5, 10, 50)
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((8, 58, 512, 63), fill="white")
+    for x in range(10, 511, 50):
+        draw.line((x, 10, x, 260), fill="black", width=2)
+    draw.line((410, 60, 510, 60), fill="black", width=2)
+    layout = detect_layout(image)[0]
+    assert len(layout.ys) - 1 == 5
+
+
+@pytest.mark.parametrize("mode", ["incomplete", "conflict", "unresolved"])
+def test_adaptive_local_recovery(server, tmp_path, monkeypatch, mode):
+    import io
+
+    from localocr.ollama import OllamaClient
+
+    path = tmp_path / "long.png"
+    synthetic(50, 2, 40).save(path)
+    calls = []
+
+    def recognize(self, encoded, *, single_table=False):
+        crop = Image.open(io.BytesIO(encoded))
+        rows = len(detect_layout(crop)[0].ys) - 1
+        calls.append(rows)
+        count = rows - 1 if mode == "incomplete" and rows > 10 else rows
+        values = [("x", "y") for _ in range(count)]
+        if mode in {"conflict", "unresolved"} and len(calls) == 2:
+            values[0] = ("conflicting", "y")
+        if mode == "unresolved" and rows == 1:
+            values[0] = ("third value", "y")
+        return (
+            "<table>"
+            + "".join(f"<tr><td>{a}</td><td>{b}</td></tr>" for a, b in values)
+            + "</table>"
+        )
+
+    monkeypatch.setattr(OllamaClient, "recognize", recognize)
+    result = convert(path, Settings(url=server[0]))[0]
+    expected = {"incomplete": "SUCCESS", "conflict": "REVIEW", "unresolved": "REVIEW"}[mode]
+    assert result.status == expected
+    assert len(calls) <= 96
+    if mode == "incomplete":
+        assert min(calls) <= 10 and result.shapes == [(50, 2)]
+    else:
+        assert calls.count(1) == 2

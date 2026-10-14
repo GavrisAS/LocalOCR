@@ -6,6 +6,8 @@ Rerun ищет existing reservation на том же SHA. Previous github.event.
 должен иметь reservation; иначе wait до 15 минут и явная ошибка. Это сохраняет
 порядок близких push без cancel-in-progress и без CI version commits.
 Git remote читается каждый раз; коллизии перечитываются, force не используется.
+При unexpected tag с другой SHA вместо ожидаемого predecessor workflow
+явно завершается ошибкой; следующий номер приблизительно не выбирается.
 Сборка/проверки идут после reservation. Неуспех оставляет tag, release отсутствует.
 PR/manual/tag pushes не создают версии. Major меняет только пользователь: явно
 изменить --major в workflow. Начальная minor новой major-линии — 1.

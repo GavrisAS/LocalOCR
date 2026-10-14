@@ -55,3 +55,26 @@ def test_gui_responsive_connection_cancel(server, tmp_path, monkeypatch):
     window.update_progress(1, 2, "test")
     assert window.bar.value() < window.bar.maximum()
     window.close()
+
+
+def test_gui_batch_progress_results(server, tmp_path, monkeypatch):
+    from PIL import Image
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "config"))
+    app = QApplication.instance() or QApplication([])
+    Image.new("RGB", (100, 100), "white").save(tmp_path / "input.png")
+    window = Window()
+    window.folder.setText(str(tmp_path))
+    window.url.setText(server[0])
+    window.launch()
+    deadline = time.monotonic() + 5
+    while window.worker is not None and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert window.worker is None
+    assert "REVIEW" in window.status.toPlainText()
+    assert window.bar.value() == window.bar.maximum()
+    assert (tmp_path / "results" / "input.xlsx").exists()
+    assert window.start.isEnabled()
+    window.close()

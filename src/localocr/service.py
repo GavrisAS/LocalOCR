@@ -103,18 +103,18 @@ def recognize_document(image, client: OllamaClient, diagnostics: Path | None):
     layouts = detect_layout(image)
     sequence = 0
 
-    def recognize(crop):
+    def recognize(crop, single_table=True):
         nonlocal sequence
         client.check_cancel()
         sequence += 1
-        text = client.recognize(encode(crop))
+        text = client.recognize(encode(crop), single_table=single_table)
         if diagnostics:
             diagnostics.mkdir(parents=True, exist_ok=True)
             (diagnostics / f"response-{sequence}.txt").write_text(text, encoding="utf-8")
         return parse_response(text)
 
     if not layouts:
-        document = recognize(image)
+        document = recognize(image, single_table=False)
         for table in document.tables:
             table.issues.append(
                 ValidationIssue(
@@ -144,8 +144,10 @@ def recognize_document(image, client: OllamaClient, diagnostics: Path | None):
             table = document.tables[0]
             apply_geometry(table, layout)
         except StructureError, OCRServerError:
-            parts = []
-            for start, end in row_fragments(layout, max_height=1000):
+            parts: list[tuple[int, int, Table]] = []
+            budget = [96]
+
+            def read_range(start, end, depth=0):
                 box = (
                     max(0, x - 3),
                     max(0, layout.ys[start] - 2),
@@ -154,6 +156,11 @@ def recognize_document(image, client: OllamaClient, diagnostics: Path | None):
                 )
                 last_error = None
                 for _ in range(2):
+                    if budget[0] <= 0:
+                        raise StructureError(
+                            "Исчерпан лимит повторного OCR (96 запросов на таблицу)"
+                        )
+                    budget[0] -= 1
                     try:
                         doc = recognize(image.crop(box))
                         if len(doc.tables) != 1:
@@ -161,13 +168,61 @@ def recognize_document(image, client: OllamaClient, diagnostics: Path | None):
                         part = doc.tables[0]
                         if part.rows != end - start or part.columns != len(layout.xs) - 1:
                             raise StructureError("Неполный OCR-фрагмент")
-                        parts.append((start, end, part))
-                        last_error = None
-                        break
+                        return [(start, end, part)]
                     except (StructureError, OCRServerError) as error:
                         last_error = error
-                if last_error:
-                    raise last_error
+                if end - start > 3 and depth < 5:
+                    middle = (start + end) // 2
+                    return read_range(start, middle + 1, depth + 1) + read_range(
+                        middle, end, depth + 1
+                    )
+                raise last_error or StructureError("Фрагмент не восстановлен")
+
+            for start, end in row_fragments(layout, max_height=1000):
+                parts.extend(read_range(start, end))
+            # Resolve only geometrically coincident observations. Two matching local
+            # rechecks must confirm one original value; otherwise fail without guessing.
+            observations = {}
+            for start, end, part in parts:
+                for cell in part.cells:
+                    observations.setdefault((start + cell.row, cell.column), []).append(cell)
+            for (row, column), observed in observations.items():
+                signatures = {(c.text, c.rowspan, c.colspan) for c in observed}
+                if len(signatures) < 2:
+                    continue
+                spans = {(c.rowspan, c.colspan) for c in observed}
+                if len(spans) != 1:
+                    raise StructureError("Конфликт объединений в перекрытии фрагментов")
+                rowspan, colspan = next(iter(spans))
+                first = read_range(row, row + rowspan)
+                second = read_range(row, row + rowspan)
+                if len(first) != 1 or len(second) != 1:
+                    raise StructureError("Неоднозначная локальная повторная проверка")
+                candidates = []
+                for checked in [first[0][2], second[0][2]]:
+                    candidate = next(
+                        (c for c in checked.cells if c.row == 0 and c.column == column), None
+                    )
+                    candidates.append(candidate)
+                if any(c is None for c in candidates):
+                    raise StructureError("Не найдено положение конфликтующей ячейки")
+                a, b = candidates
+                assert a is not None and b is not None
+                signature = (a.text, a.rowspan, a.colspan)
+                confirmed = signature == (b.text, b.rowspan, b.colspan) and signature in signatures
+                # Preserve an actual source observation when text remains uncertain.
+                # No inferred replacement: all alternatives are exposed in REVIEW.
+                chosen = a.text if confirmed else observed[0].text
+                alternatives = sorted({c.text for c in observed} | {a.text, b.text})
+                warning = (
+                    "REVIEW: подтверждено двумя локальными проверками"
+                    if confirmed
+                    else "REVIEW: текст неоднозначен; сохранено первое OCR-наблюдение"
+                )
+                warning += "; альтернативы: " + " | ".join(alternatives)
+                for cell in observed:
+                    cell.text = chosen
+                    cell.warnings.append(warning)
             table = assemble_fragments(parts, layout)
         tables.append(table)
     return TableDocument(tables)

@@ -70,3 +70,8 @@ def test_multiple_and_markdown():
 def test_canonical_validation(cells, rows, columns):
     with pytest.raises(StructureError):
         Table(cells, rows, columns).grid()
+
+
+def test_span_allocation_limit():
+    with pytest.raises(StructureError, match="100000"):
+        parse_response('<table><tr><td rowspan="10000" colspan="1000">x</td></tr></table>')

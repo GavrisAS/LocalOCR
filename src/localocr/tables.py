@@ -66,6 +66,8 @@ class TableParser(HTMLParser):
         elif tag == "tr":
             if self.row is None or self.cell is not None or self.rows is None:
                 raise StructureError("Незакрытая ячейка или строка")
+            if len(self.rows) >= 10000:
+                raise StructureError("Слишком много строк")
             self.rows.append(self.row)
             self.row = None
         elif tag == "table":
@@ -90,6 +92,8 @@ def place_rows(rows: list[list[Cell]]) -> Table:
                     if (y, x) in occupied:
                         raise StructureError("Перекрытие объединений")
                     occupied.add((y, x))
+                    if len(occupied) > 100000:
+                        raise StructureError("Таблица превышает 100000 ячеек")
             cells.append(cell)
             column += cell.colspan
             width = max(width, column)

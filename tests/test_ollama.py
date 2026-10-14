@@ -106,3 +106,37 @@ def test_bad_url(url):
 )
 def test_local(address):
     assert local_address(address)
+
+
+def test_single_table_stop_not_fake_repair(server):
+    url, state = server
+    state["body"] = {"response": "<table><tr><td>x</td></tr>", "done": True, "done_reason": "stop"}
+    client = OllamaClient(Settings(url=url))
+    assert client.recognize(b"x", single_table=True).endswith("</table>")
+    assert state["requests"][-1][1]["options"]["stop"] == ["</table>"]
+    state["body"]["done_reason"] = "length"
+    with pytest.raises(OCRServerError):
+        client.recognize(b"x", single_table=True)
+    state["body"]["done_reason"] = "stop"
+    from localocr.domain import StructureError
+    from localocr.tables import parse_response
+
+    state["body"]["response"] = "<table><tr><td>unfinished"
+    with pytest.raises(StructureError):
+        parse_response(client.recognize(b"x", single_table=True))
+
+
+def test_dns_mixed_answers_fail_closed(server, monkeypatch):
+    import socket
+
+    original = socket.getaddrinfo
+
+    def mixed(host, port, *args, **kwargs):
+        answers = original("127.0.0.1", port, *args, **kwargs)
+        answers.append((socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", port)))
+        return answers
+
+    monkeypatch.setattr(socket, "getaddrinfo", mixed)
+    with pytest.raises(ValueError, match="LAN"):
+        OllamaClient(Settings(url=server[0])).doctor()
+    assert not server[1]["requests"]

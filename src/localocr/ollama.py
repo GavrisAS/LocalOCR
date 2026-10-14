@@ -171,7 +171,7 @@ class OllamaClient:
             raise OCRServerError(f"Модель {self.settings.model} не установлена на сервере Ollama")
         return f"Подключено · {self.settings.model}"
 
-    def recognize(self, image: bytes) -> str:
+    def recognize(self, image: bytes, *, single_table: bool = False) -> str:
         data = self.request(
             "POST",
             "/api/generate",
@@ -185,6 +185,7 @@ class OllamaClient:
                     "seed": 0,
                     "num_ctx": 32768,
                     "num_predict": self.settings.num_predict,
+                    **({"stop": ["</table>"]} if single_table else {}),
                 },
             },
         )
@@ -193,4 +194,8 @@ class OllamaClient:
             raise OCRServerError("Пустой OCR-ответ")
         if data.get("done") is not True or data.get("done_reason") == "length":
             raise OCRServerError("Усечённый ответ OCR; требуется меньший фрагмент")
+        # Ollama omits the matched stop sequence from response. Restore only that
+        # delimiter after a confirmed stop, never cell values or incomplete rows.
+        if single_table and data.get("done_reason") == "stop" and "</table>" not in text.lower():
+            text += "</table>"
         return text

@@ -1,5 +1,6 @@
 """CLI exit codes: 0 success, 1 review/partial/failure, 2 config, 3 server, 130 cancel."""
 
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -78,4 +79,8 @@ def convert(
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="replace")
     app()

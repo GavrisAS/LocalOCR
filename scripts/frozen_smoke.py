@@ -18,7 +18,7 @@ def main():
     parser.add_argument("--version", required=True)
     args = parser.parse_args()
     exe = args.exe.resolve()
-    version = subprocess.check_output([str(exe), "--version"], text=True).strip()
+    version = subprocess.check_output([str(exe), "--version"], text=True, encoding="utf-8").strip()
     if version != args.version:
         raise RuntimeError(f"Frozen version mismatch: {version}")
 
@@ -60,7 +60,9 @@ def main():
                 "--ollama-url",
                 f"http://127.0.0.1:{server.server_port}",
             ]
-            result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(
+                command, capture_output=True, text=True, encoding="utf-8", timeout=60
+            )
             # Unruled input must honestly be REVIEW, exit 1.
             if result.returncode != 1:
                 raise RuntimeError(f"Frozen conversion failed: {result.stdout} {result.stderr}")

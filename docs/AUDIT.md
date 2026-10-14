@@ -6,15 +6,17 @@
 |---|---|
 | Ruff check / format | PASS |
 | ty | PASS |
-| pytest | PASS, 104 теста |
+| pytest | PASS, 113 тестов |
 | Offline с запретом внешних socket.connect | PASS, локальный HTTP mock + XLSX |
 | Qt event loop, worker, отмена, настройки | PASS, offscreen Linux |
 | Реальный Ollama doctor | PASS, glm-ocr:latest |
-| Пользовательское изображение end-to-end | FAIL, Ollama HTTP 500, XLSX не создан |
+| Пользовательское изображение end-to-end | PASS технический конвейер, результат REVIEW; 35×9, 11 merges, один конфликт |
+| Синтетическая таблица, реальная GLM-OCR | PASS, SUCCESS; roundtrip 2×2 с проверкой значений |
 | Независимая текстовая/структурная точность | PENDING, нет эталона |
-| Linux/Windows GitHub CI | PENDING до публикации |
-| Windows frozen smoke / ZIP | PENDING до runner |
-| Реальная LAN/HTTPS установка | PENDING |
+| Linux/Windows GitHub CI | PASS для 0460f9e; обновлённый commit должен пройти CI |
+| Windows frozen smoke / ZIP | FAIL для v0.1: UTF-8 console output; исправлено, повторная сборка PENDING |
+| LAN HTTP через частный IP интерфейса с запретом других sockets | PASS, local mock + XLSX |
+| Отдельный LAN сервер / HTTPS deployment | PENDING |
 
 Отчёты pytest и пользовательская диагностика остаются локальными в .evidence
 и не коммитятся. Сырые изображения/ответы/результаты прототипа исключены Git.
@@ -26,3 +28,13 @@ remote reservations. Mock-тесты не доказывают точность 
 
 Candidate не объявляется production-ready. Конфликты на границах OCR частей
 отклоняются, слабая геометрия — REVIEW; это намеренная защита от ложного успеха.
+
+Первый push зарезервировал v0.1 до проверок. Windows GUI smoke прошёл,
+CLI smoke выявил кодировку консольного вывода; Release v0.1 не опубликован.
+Следующий push должен получить v0.2, не переписывая v0.1.
+
+Ранняя реальная проверка вернула HTTP 500 при повторной генерации HTML.
+После ограничения остановки для одиночной геометрической таблицы synthetic
+SUCCESS. На пользовательской таблице partial header separator обнаруживается
+общим алгоритмом; повторная проверка конфликтующего текста не даёт независимого
+эталона, поэтому результат REVIEW. Нет заявленного процента точности.

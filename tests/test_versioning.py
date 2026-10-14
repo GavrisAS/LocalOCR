@@ -32,3 +32,8 @@ def test_numeric_major():
 @pytest.mark.parametrize("tag", ["v0.1.0", "v0.01", "0.1", "latest", "v-1.1", "v1.a"])
 def test_invalid_tags(tag):
     assert parse_tag(tag) is None
+
+
+def test_remote_collision_cannot_skip_version():
+    with pytest.raises(ValueError, match="predecessor"):
+        select_tag({"v0.1": "first", "v0.2": "unexpected"}, "second", "first", 0)
