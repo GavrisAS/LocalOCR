@@ -88,3 +88,13 @@ connect=5, общий deadline, local/LAN URL validation и тесты external 
 Реальный отдельный Ollama/LAN HTTPS и чистая Windows VM — PENDING.
 Окончательные SHA, checks, jobs и release evidence записываются после push
 в локальный переносимый handoff; этот документ не предрешает CI результат.
+
+## Исправление окружения reserve после первого push
+
+Первый корректирующий SHA 662c9bb остановился в reserve: системный Python runner
+не поддерживает PEP 758 при импорте нового __init__. Проверки Linux/Windows
+под Python 3.14 прошли. Валидный синтаксис не изменён: reserve теперь явно
+устанавливает и запускает Python 3.14 через uv --no-project до checks/build.
+v0.5 зарезервирован исходным алгоритмом за 662c9bb; повтор локально переиспользовал
+ту же reservation. Необходимый дополнительный main push потребляет v0.6.
+Это не version-bump commit; история и v0.4 не изменены.

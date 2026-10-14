@@ -16,8 +16,12 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.13.0'
+      - run: uv python install 3.14
       - id: version
-        run: python scripts/next_version.py --sha '${{ github.sha }}' --before '${{ github.event.before }}' --major 0
+        run: uv run --no-project --python 3.14 python scripts/next_version.py --sha '${{ github.sha }}' --before '${{ github.event.before }}' --major 0
   checks:
     needs: reserve
     strategy:
