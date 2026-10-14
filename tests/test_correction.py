@@ -227,3 +227,37 @@ def test_technical_success_with_wrong_ocr(server, tmp_path):
     summary = compare(actual, gold)
     assert summary["counts"]["text_mismatches"] == 4
     assert summary["counts"]["unflagged_mismatches"] == 4
+
+
+@pytest.mark.parametrize("network_error", [False, True])
+def test_release_unicode_absence_vs_network(tmp_path, monkeypatch, network_error):
+    import importlib.util
+    import json
+    import sys
+
+    spec = importlib.util.spec_from_file_location(
+        "verify_release", Path("scripts/verify_release.py")
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    payload = json.dumps(
+        [[dict(tag_name="v0.4", body="Синтетическая проверка")]], ensure_ascii=False
+    ).encode("utf-8")
+
+    def api(command, **kwargs):
+        assert kwargs.get("encoding") == "utf-8"
+        if network_error:
+            raise subprocess.CalledProcessError(1, command)
+        # Reproduce Windows cp1252 when encoding is omitted, independently of host locale.
+        return payload.decode(kwargs.get("encoding", "cp1252"))
+
+    monkeypatch.setattr(subprocess, "check_output", api)
+    monkeypatch.setattr(sys, "argv", ["verify_release", "--tag", "v0.7", "--sha", "sha"])
+    if network_error:
+        with pytest.raises(subprocess.CalledProcessError):
+            module.main()
+    else:
+        with pytest.raises(SystemExit) as result:
+            module.main()
+        assert result.value.code == 3

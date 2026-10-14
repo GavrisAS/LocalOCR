@@ -98,3 +98,9 @@ connect=5, общий deadline, local/LAN URL validation и тесты external 
 v0.5 зарезервирован исходным алгоритмом за 662c9bb; повтор локально переиспользовал
 ту же reservation. Необходимый дополнительный main push потребляет v0.6.
 Это не version-bump commit; история и v0.4 не изменены.
+
+Windows v0.6 build и GUI/CLI frozen smoke прошли. Release verification безопасно
+отказала до create: GitHub API Unicode JSON декодировался по Windows cp1252.
+Ввод GitHub subprocess и локального Git теперь явно UTF-8. Mock контракт
+с Unicode API JSON проверяет отсутствие release отдельно от сетевой ошибки.
+Необходимый дополнительный push резервирует v0.7; v0.5/v0.6 tags сохраняются.

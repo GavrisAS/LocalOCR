@@ -24,7 +24,9 @@ def main():
         raise RuntimeError(f"Frozen version mismatch: {version}")
 
     if args.commit:
-        commit = subprocess.check_output([str(exe), "--build-commit"], text=True).strip()
+        commit = subprocess.check_output(
+            [str(exe), "--build-commit"], text=True, encoding="utf-8"
+        ).strip()
         if commit != args.commit:
             raise RuntimeError(f"Frozen commit mismatch: {commit}")
 

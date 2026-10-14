@@ -52,7 +52,9 @@ def main():
     # Distinguish an absent release from authentication/network errors.
     releases = json.loads(
         subprocess.check_output(
-            ["gh", "api", "--paginate", "--slurp", "repos/{owner}/{repo}/releases"], text=True
+            ["gh", "api", "--paginate", "--slurp", "repos/{owner}/{repo}/releases"],
+            text=True,
+            encoding="utf-8",
         )
     )
     found = [release for page in releases for release in page if release["tag_name"] == args.tag]
@@ -69,22 +71,29 @@ def main():
                 "tagName,isPrerelease,isDraft,name,assets",
             ],
             text=True,
+            encoding="utf-8",
         )
     )
     remote = json.loads(
         subprocess.check_output(
-            ["gh", "api", "repos/{owner}/{repo}/git/ref/tags/" + args.tag], text=True
+            ["gh", "api", "repos/{owner}/{repo}/git/ref/tags/" + args.tag],
+            text=True,
+            encoding="utf-8",
         )
     )["object"]
     while remote["type"] == "tag":
         remote = json.loads(
             subprocess.check_output(
-                ["gh", "api", "repos/{owner}/{repo}/git/tags/" + remote["sha"]], text=True
+                ["gh", "api", "repos/{owner}/{repo}/git/tags/" + remote["sha"]],
+                text=True,
+                encoding="utf-8",
             )
         )["object"]
     if remote["type"] != "commit" or remote["sha"] != args.sha:
         raise ValueError("Remote tag SHA mismatch")
-    sha = subprocess.check_output(["git", "rev-list", "-n", "1", args.tag], text=True).strip()
+    sha = subprocess.check_output(
+        ["git", "rev-list", "-n", "1", args.tag], text=True, encoding="utf-8"
+    ).strip()
     with tempfile.TemporaryDirectory() as temporary:
         folder = Path(temporary)
         subprocess.run(["gh", "release", "download", args.tag, "--dir", str(folder)], check=True)

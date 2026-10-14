@@ -13,6 +13,7 @@ def source_version(root: Path) -> str:
             ["git", "-C", str(root), "tag", "--points-at", "HEAD"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=True,
             timeout=5,
         )
@@ -25,6 +26,7 @@ def source_version(root: Path) -> str:
             ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=True,
             timeout=5,
         ).stdout
