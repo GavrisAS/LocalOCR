@@ -30,7 +30,10 @@ class Handler(BaseHTTPRequestHandler):
   self.rfile.read(int(self.headers['Content-Length']))
   body=json.dumps({'choices':[{'message':{'content':'<table><tr><td>1</td></tr></table>'},'finish_reason':'stop'}]}).encode()
   self.send_response(200);self.end_headers();self.wfile.write(body)
-HTTPServer(('127.0.0.1',a.port),Handler).serve_forever()
+server=HTTPServer(('127.0.0.1',a.port),Handler)
+from pathlib import Path
+Path(__file__).with_suffix('.ready').write_text('ready')
+server.serve_forever()
 """
 
 
@@ -105,11 +108,20 @@ def test_readiness_failure_shutdown(fake_engine, mode):
 
 
 def test_startup_cancel(fake_engine):
+    import time
+
     settings, script, _ = fake_engine
     script.write_text("MODE='hang'\n" + FAKE)
     event = Event()
     client = EmbeddedOCRProvider(settings, event)
-    timer = Timer(0.15, event.set)
+
+    def cancel_after_listening():
+        deadline = time.monotonic() + 5
+        while not script.with_suffix(".ready").exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        event.set()
+
+    timer = Timer(0.05, cancel_after_listening)
     timer.start()
     try:
         with pytest.raises(Cancelled):
@@ -117,3 +129,12 @@ def test_startup_cancel(fake_engine):
     finally:
         timer.join()
     assert client.process is None and not client.owns_lock
+
+
+def test_generated_key_with_leading_dash_is_safe(fake_engine, monkeypatch):
+    import secrets
+
+    monkeypatch.setattr(secrets, "token_urlsafe", lambda count: "-fixture-key")
+    with EmbeddedOCRProvider(fake_engine[0]) as client:
+        assert "CPU" in client.doctor()
+        assert "<table>" in client.recognize(b"image")

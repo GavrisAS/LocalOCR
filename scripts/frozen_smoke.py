@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import subprocess
 import tempfile
 import threading
@@ -12,6 +13,18 @@ from openpyxl import load_workbook
 from PIL import Image
 
 
+def isolated_environment():
+    env = dict(os.environ)
+    for name in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"):
+        env.pop(name, None)
+    env["PATH"] = (
+        str(Path(env.get("SystemRoot", "C:/Windows")) / "System32")
+        if os.name == "nt"
+        else "/usr/bin:/bin"
+    )
+    return env
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", required=True, type=Path)
@@ -19,13 +32,15 @@ def main():
     parser.add_argument("--commit")
     args = parser.parse_args()
     exe = args.exe.resolve()
-    version = subprocess.check_output([str(exe), "--version"], text=True, encoding="utf-8").strip()
+    version = subprocess.check_output(
+        [str(exe), "--version"], text=True, encoding="utf-8", env=isolated_environment()
+    ).strip()
     if version != args.version:
         raise RuntimeError(f"Frozen version mismatch: {version}")
 
     if args.commit:
         commit = subprocess.check_output(
-            [str(exe), "--build-commit"], text=True, encoding="utf-8"
+            [str(exe), "--build-commit"], text=True, encoding="utf-8", env=isolated_environment()
         ).strip()
         if commit != args.commit:
             raise RuntimeError(f"Frozen commit mismatch: {commit}")
@@ -69,7 +84,12 @@ def main():
                 f"http://127.0.0.1:{server.server_port}",
             ]
             result = subprocess.run(
-                command, capture_output=True, text=True, encoding="utf-8", timeout=60
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=60,
+                env=isolated_environment(),
             )
             # Unruled input must honestly be REVIEW, exit 1.
             if result.returncode != 1:

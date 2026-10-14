@@ -16,6 +16,9 @@ try {
     Checked 'GUI build'
     uv run pyinstaller --noconfirm --clean --onedir --console --name LocalOCR-CLI --paths src --hidden-import localocr._build_version scripts/cli_launcher.py
     Checked 'CLI build'
+    # Bundle the standard C++ runtime under the CLI's DLL search directory too.
+    Copy-Item dist/LocalOCR/_internal/PySide6/MSVCP140*.dll dist/LocalOCR-CLI/_internal/ -Force
+    Copy-Item dist/LocalOCR/_internal/PySide6/VCRUNTIME140*.dll dist/LocalOCR-CLI/_internal/ -Force
     $gui = Start-Process -FilePath 'dist/LocalOCR/LocalOCR.exe' -ArgumentList '--smoke-test','--expected-version',$BuildVersion,'--expected-commit',$commit -PassThru
     if (-not $gui.WaitForExit(30000)) { $gui.Kill(); throw 'GUI smoke timeout' }
     if ($gui.ExitCode -ne 0) { throw 'GUI smoke failed' }

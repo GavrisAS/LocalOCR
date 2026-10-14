@@ -10,6 +10,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from frozen_smoke import isolated_environment
 from openpyxl import load_workbook
 from PIL import Image, ImageDraw, ImageFont
 
@@ -82,6 +83,7 @@ def qualify(root: Path, output: Path, sha: str, isolated: bool):
                     encoding="utf-8",
                     capture_output=True,
                     timeout=1800,
+                    env=isolated_environment(),
                 )
                 xlsx = image.parent / "results" / (image.stem + ".xlsx")
                 if result.returncode not in {0, 1} or not xlsx.is_file():

@@ -68,7 +68,7 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
         self.cancel = cancel or Event()
         self.settings = OpenWebUISettings(
             model="localocr-" + secrets.token_hex(16),
-            api_token=secrets.token_urlsafe(32),
+            api_token="localocr-" + secrets.token_urlsafe(32),
             timeout=settings.timeout,
             num_predict=settings.num_predict,
             retries=1,
@@ -109,9 +109,18 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
             except OSError as error:
                 raise OCRServerError("Другой Embedded engine уже выполняет задание") from error
             engine, model, mmproj = self.embedded.paths()
-            with socket.socket() as reservation:
-                reservation.bind(("127.0.0.1", 0))
-                port = reservation.getsockname()[1]
+            # Avoid the default OS ephemeral client-port ranges: readiness probes
+            # must not claim the server port before the child binds it.
+            for _ in range(32):
+                port = 10000 + secrets.randbelow(20000)
+                with socket.socket() as reservation:
+                    try:
+                        reservation.bind(("127.0.0.1", port))
+                    except OSError:
+                        continue
+                break
+            else:
+                raise OCRServerError("Нет свободного loopback порта для Embedded")
             from dataclasses import replace
 
             self.settings = replace(self.settings, url=f"http://127.0.0.1:{port}")

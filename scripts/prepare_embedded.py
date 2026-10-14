@@ -33,6 +33,28 @@ def download(item, target: Path):
         temporary.unlink(missing_ok=True)
 
 
+def collect_runtime_dlls(root: Path):
+    # The official engine ZIP assumes Microsoft's C++ runtime is installed.
+    # Reuse redistributable DLLs already collected in the frozen GUI bundle.
+    # In particular the CLI numpy DLL is renamed and cannot satisfy MSVCP140.dll.
+    runtime_sources = [root.parent / "_internal", root.parent / "_internal/PySide6"]
+    for directory in runtime_sources:
+        for pattern in (
+            "[Vv][Cc][Rr][Uu][Nn][Tt][Ii][Mm][Ee]140*.dll",
+            "[Mm][Ss][Vv][Cc][Pp]140*.dll",
+            "concrt140.dll",
+        ):
+            for dll in directory.glob(pattern, case_sensitive=False):
+                target = root / "engine" / dll.name.upper()
+                if not target.exists():
+                    shutil.copyfile(dll, target)
+    if (
+        not (root / "engine/MSVCP140.DLL").is_file()
+        or not (root / "engine/VCRUNTIME140.DLL").is_file()
+    ):
+        raise ValueError("Frozen GUI C++ runtime DLLs required for standalone engine")
+
+
 def prepare(root: Path, precision: str):
     lock = json.loads(Path(__file__).with_name("embedded-lock.json").read_text())
     root.mkdir(parents=True, exist_ok=True)
@@ -54,6 +76,7 @@ def prepare(root: Path, precision: str):
                         raise ValueError("Duplicate engine member")
                     with bundle.open(info) as source, target.open("wb") as out:
                         shutil.copyfileobj(source, out, 1024 * 1024)
+    collect_runtime_dlls(root)
     files = {}
     for path in sorted(root.rglob("*")):
         if path.is_file():

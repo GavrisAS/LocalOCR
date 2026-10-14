@@ -126,3 +126,22 @@ IPv4 ranges, включает firewall profiles на время проверки
 и manifests/evidence, без дублирования моделей в artifact storage.
 Дополнительный содержательный push резервирует фактический следующий minor;
 v0.9 assets/tag остаются immutable. Итоговая версия указана в FINAL_REPORT.
+
+Следующий Linux release check выявил premature exit fake subprocess в тесте
+startup cancellation (Windows 179 PASS, обычный CI Linux/Windows PASS).
+Фактическая причина premature exit: случайный Embedded API key мог начинаться
+с дефиса, и argparse fake server принимал его за option. Внутренний key теперь
+имеет буквенный prefix; regression принудительно воспроизводит дефис.
+Отмена теста синхронизируется с фактическим listening fake server; выбор
+engine порта также вынесен из стандартных ephemeral client ranges, чтобы
+уменьшить отдельный риск занятия его readiness probe до child bind. Runtime deadline/ownership
+проверки и запрет соединения с чужим сервером сохранены. v0.10 reservation
+сохраняется даже при checks failure; её release не создаётся задним числом.
+
+Проверка состава Lite выявила MSVCP140.dll только в GUI Qt subdirectory, а CLI
+numpy DLL переименован. prepare_embedded теперь кладёт redistributable
+MSVCP140*/VCRUNTIME140* из frozen GUI непосредственно в engine и CLI _internal,
+включает engine DLLs
+в component SHA256 manifest. Lite frozen CLI и real F16 CLI запускаются с PATH
+только System32 и без PYTHONHOME/PYTHONPATH/VIRTUAL_ENV; глобальные Python/uv/Git/
+Ollama/llama.cpp не используются. Чистая Windows VM всё ещё отдельная PENDING.

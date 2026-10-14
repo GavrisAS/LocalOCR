@@ -122,3 +122,27 @@ def test_manifest_release_rerun_exact_assets(tmp_path, monkeypatch):
     (tmp_path / "part001").write_bytes(b"modified")
     with pytest.raises(ValueError, match="digest"):
         verifier.verify(metadata, tmp_path, "v1.0", "sha", "sha")
+
+
+def test_standalone_engine_collects_frozen_cpp_runtime(tmp_path):
+    prepare = load("prepare_embedded")
+    root = tmp_path / "LocalOCR/embedded"
+    (root / "engine").mkdir(parents=True)
+    gui = root.parent / "_internal/PySide6"
+    gui.mkdir(parents=True)
+    for name in ["MSVCP140.dll", "MSVCP140_1.dll", "VCRUNTIME140.dll", "VCRUNTIME140_1.dll"]:
+        (gui / name).write_bytes(name.encode())
+    prepare.collect_runtime_dlls(root)
+    assert (root / "engine/MSVCP140.DLL").read_bytes() == b"MSVCP140.dll"
+    assert (root / "engine/VCRUNTIME140_1.DLL").read_bytes() == b"VCRUNTIME140_1.dll"
+
+
+def test_renamed_numpy_runtime_does_not_satisfy_engine(tmp_path):
+    prepare = load("prepare_embedded")
+    root = tmp_path / "embedded"
+    (root / "engine").mkdir(parents=True)
+    numpy = root.parent / "_internal/numpy.libs"
+    numpy.mkdir(parents=True)
+    (numpy / "msvcp140-renamed.dll").write_bytes(b"fixture")
+    with pytest.raises(ValueError, match=r"C\+\+ runtime"):
+        prepare.collect_runtime_dlls(root)
