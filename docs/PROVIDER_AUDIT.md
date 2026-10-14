@@ -114,3 +114,15 @@ Real OpenWebUI, независимый human gold, чистая Windows VM, GPU 
 создаёт allowlisted source.zip/JUnit/audit/aggregate evidence/SHA256SUMS.
 Финальные CI/release/qualification JSON и FINAL_REPORT лежат в
 .evidence/providers; модели/изображения туда для handoff не включаются.
+
+## Исправление Windows isolation после первого пакета
+
+v0.9/c21c222: Linux/Windows 179 tests и frozen Lite PASS; F16 installation
+выполнена, но New-NetFirewallRule отклонил диапазон до inference. Release
+сохранил только Lite и явно сообщил Portable PENDING. Это не F16 failure
+и не F16 PASS. Исправление заменяет IPv6 /0 на два /1, использует положительные
+IPv4 ranges, включает firewall profiles на время проверки и восстанавливает их.
+Многогигабайтные части хранятся только в Release; CI artifact содержит Lite
+и manifests/evidence, без дублирования моделей в artifact storage.
+Дополнительный содержательный push резервирует фактический следующий minor;
+v0.9 assets/tag остаются immutable. Итоговая версия указана в FINAL_REPORT.

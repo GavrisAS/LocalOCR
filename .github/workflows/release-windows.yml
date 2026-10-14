@@ -103,7 +103,10 @@ jobs:
         with:
           name: windows-distribution-attempt-${{ github.run_attempt }}
           path: |
-            dist/release/*
+            dist/release/*windows-x64.zip
+            dist/release/*.sha256
+            dist/release/*manifest.json
+            dist/release/assemble_portable.ps1
             dist/f16-qualification.json
             dist/assembled-qualification.json
             dist/LocalOCR/embedded/manifest.json
