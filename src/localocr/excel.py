@@ -84,6 +84,9 @@ def write_workbook(
         sheet.append(["Таблица", "Строка", "Столбец", "REVIEW"])
         for row in review:
             sheet.append(list(row))
+            for target in sheet[sheet.max_row]:
+                if isinstance(target.value, str):
+                    target.data_type = "s"
         sheet.column_dimensions["D"].width = 90
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=".localocr-", suffix=".xlsx", dir=path.parent)

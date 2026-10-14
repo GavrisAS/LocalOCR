@@ -137,7 +137,17 @@ class Window(QMainWindow):
                 status: sum(r.status == status for r in result)
                 for status in ["SUCCESS", "REVIEW", "FAILED", "SKIPPED"]
             }
-            self.status.appendPlainText(f"Завершено: {counts}")
+            self.status.appendPlainText(
+                f"Обработано файлов: {len(result)}\n"
+                f"Успешно: {counts['SUCCESS']} · Требуют проверки (REVIEW): {counts['REVIEW']}\n"
+                f"Ошибок: {counts['FAILED']} · Пропущено: {counts['SKIPPED']}\n"
+                f"Каталог результатов: {Path(self.folder.text()) / 'results'}"
+            )
+            for item in result:
+                if item.status in {"REVIEW", "FAILED"}:
+                    self.status.appendPlainText(
+                        f"{item.source}: {item.status}; предупреждений: {item.warnings}. {item.message}"
+                    )
         if self.worker and not self.worker.cancel.is_set():
             self.bar.setRange(0, 1)
             self.bar.setValue(1)
@@ -167,7 +177,10 @@ class Window(QMainWindow):
             self.status.appendPlainText("Дождитесь завершения отмены перед закрытием")
             event.ignore()
         else:
-            save_config(AppConfig(self.folder.text(), self.url.text()))
+            try:
+                save_config(AppConfig(self.folder.text(), self.url.text()))
+            except OSError:
+                self.status.appendPlainText("Не удалось сохранить настройки")
             event.accept()
 
 

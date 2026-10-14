@@ -82,3 +82,22 @@ def test_invalid_not_published(tmp_path):
     with pytest.raises(StructureError):
         write_workbook(TableDocument([Table([Cell(0, 0, "x")], 2, 2)]), tmp_path / "bad.xlsx")
     assert not list(tmp_path.iterdir())
+
+
+def test_review_text_cannot_be_formula(tmp_path):
+    doc = TableDocument(
+        [
+            Table(
+                [Cell(0, 0, "=1+1", warnings=["=2+2"])],
+                1,
+                1,
+                issues=[ValidationIssue("x", '=HYPERLINK("bad")')],
+            )
+        ]
+    )
+    path = tmp_path / "safe.xlsx"
+    write_workbook(doc, path)
+    book = load_workbook(path)
+    assert all(cell.data_type != "f" for sheet in book for row in sheet for cell in row)
+    assert book["Проверка"]["D2"].value == "=2+2"
+    book.close()

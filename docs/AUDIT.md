@@ -6,14 +6,14 @@
 |---|---|
 | Ruff check / format | PASS |
 | ty | PASS |
-| pytest | PASS, 113 тестов |
+| pytest | PASS, 114 тестов |
 | Offline с запретом внешних socket.connect | PASS, локальный HTTP mock + XLSX |
 | Qt event loop, worker, отмена, настройки | PASS, offscreen Linux |
 | Реальный Ollama doctor | PASS, glm-ocr:latest |
 | Пользовательское изображение end-to-end | PASS технический конвейер, результат REVIEW; 35×9, 11 merges, один конфликт |
 | Синтетическая таблица, реальная GLM-OCR | PASS, SUCCESS; roundtrip 2×2 с проверкой значений |
 | Независимая текстовая/структурная точность | PENDING, нет эталона |
-| Linux/Windows GitHub CI | PASS для 0460f9e; обновлённый commit должен пройти CI |
+| Linux/Windows GitHub CI | PASS для 0460f9e, 70f1198, 61caa6d; финальный commit должен пройти CI |
 | Windows frozen smoke / ZIP | FAIL для v0.1: UTF-8 console output; исправлено, повторная сборка PENDING |
 | LAN HTTP через частный IP интерфейса с запретом других sockets | PASS, local mock + XLSX |
 | Отдельный LAN сервер / HTTPS deployment | PENDING |
@@ -38,3 +38,9 @@ CLI smoke выявил кодировку консольного вывода; R
 SUCCESS. На пользовательской таблице partial header separator обнаруживается
 общим алгоритмом; повторная проверка конфликтующего текста не даёт независимого
 эталона, поэтому результат REVIEW. Нет заявленного процента точности.
+
+Финальный аудит дополнительно проверяет отсутствие исполняемых формул на
+листе «Проверка» (включая warning strings), UTF-8 launcher, русский GUI summary.
+Linux source GUI smoke фактически запущен с Qt offscreen, PASS.
+Финальные remote CI/release результаты фиксируются в отчёте handoff после
+завершения runner; текущий документ не выдаёт pending сборку за PASS.
