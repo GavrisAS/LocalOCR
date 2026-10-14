@@ -261,3 +261,21 @@ def test_release_unicode_absence_vs_network(tmp_path, monkeypatch, network_error
         with pytest.raises(SystemExit) as result:
             module.main()
         assert result.value.code == 3
+
+
+def test_release_missing_rerun_fails(monkeypatch):
+    import runpy
+    import sys
+
+    module = runpy.run_path("scripts/verify_release.py")
+
+    def absent(command, **kwargs):
+        assert kwargs["encoding"] == "utf-8"
+        return "[[]]"
+
+    monkeypatch.setattr(subprocess, "check_output", absent)
+    monkeypatch.setattr(
+        sys, "argv", ["verify_release", "--tag", "v0.8", "--sha", "sha", "--require-existing"]
+    )
+    with pytest.raises(ValueError, match="missing on rerun"):
+        module["main"]()

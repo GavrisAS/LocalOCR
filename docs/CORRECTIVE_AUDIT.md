@@ -104,3 +104,9 @@ Windows v0.6 build и GUI/CLI frozen smoke прошли. Release verification б
 Ввод GitHub subprocess и локального Git теперь явно UTF-8. Mock контракт
 с Unicode API JSON проверяет отсутствие release отдельно от сетевой ошибки.
 Необходимый дополнительный push резервирует v0.7; v0.5/v0.6 tags сохраняются.
+
+Финальная сверка контракта после успешного v0.7/rerun выявила: caller разрешал
+initial create при отсутствии release и на rerun. Strict --require-existing
+теперь обязателен на run_attempt > 1 и при post-create verification. Исчезнувший
+historical release даёт FAIL без recreation, что проверяет mock regression.
+Необходимый последний push потребляет v0.8; опубликованный v0.7 не изменяется.

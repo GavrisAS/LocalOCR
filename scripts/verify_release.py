@@ -48,6 +48,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tag", required=True)
     parser.add_argument("--sha", required=True)
+    parser.add_argument("--require-existing", action="store_true")
     args = parser.parse_args()
     # Distinguish an absent release from authentication/network errors.
     releases = json.loads(
@@ -59,6 +60,8 @@ def main():
     )
     found = [release for page in releases for release in page if release["tag_name"] == args.tag]
     if not found:
+        if args.require_existing:
+            raise ValueError("Release missing on rerun; historical release must not be recreated")
         raise SystemExit(3)  # caller may create only an absent release
     metadata = json.loads(
         subprocess.check_output(

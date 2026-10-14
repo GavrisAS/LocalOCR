@@ -73,10 +73,12 @@ jobs:
         shell: pwsh
         run: |
           $tag = '${{ needs.reserve.outputs.tag }}'
-          uv run python scripts/verify_release.py --tag $tag --sha '${{ github.sha }}'
+          $verifyArgs = @('--tag', $tag, '--sha', '${{ github.sha }}')
+          if ([int]'${{ github.run_attempt }}' -gt 1) { $verifyArgs += '--require-existing' }
+          uv run python scripts/verify_release.py @verifyArgs
           if ($LASTEXITCODE -eq 0) { exit 0 }
           if ($LASTEXITCODE -ne 3) { throw 'Existing release verification failed; immutable assets unchanged' }
           gh release create $tag dist/LocalOCR-v*-windows-x64.zip dist/*.sha256 --verify-tag --prerelease --title "LocalOCR $tag candidate" --notes-file docs/RELEASE_NOTES.md
           if ($LASTEXITCODE -ne 0) { throw 'Release failed' }
-          uv run python scripts/verify_release.py --tag $tag --sha '${{ github.sha }}'
+          uv run python scripts/verify_release.py --tag $tag --sha '${{ github.sha }}' --require-existing
           if ($LASTEXITCODE -ne 0) { throw 'Published release verification failed' }
