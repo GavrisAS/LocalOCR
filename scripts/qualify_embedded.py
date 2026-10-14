@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from contextlib import nullcontext
 from pathlib import Path
 
 from frozen_smoke import isolated_environment
@@ -45,7 +46,7 @@ def synthetic(path: Path, rows: int):
     return expected
 
 
-def qualify(root: Path, output: Path, sha: str, isolated: bool):
+def qualify(root: Path, output: Path, sha: str, isolated: bool, relocated=False):
     evidence = {
         "status": "FAIL",
         "platform": sys.platform,
@@ -60,9 +61,17 @@ def qualify(root: Path, output: Path, sha: str, isolated: bool):
     evidence["upstream"] = json.loads(manifest.read_text())["upstream"]
     try:
         # Full relocation, including DLLs and models; original installation is not used.
-        with tempfile.TemporaryDirectory(prefix="localocr-relocated-") as directory:
-            moved = Path(directory) / "LocalOCR"
-            shutil.copytree(root, moved)
+        context = (
+            nullcontext(root.parent)
+            if relocated
+            else tempfile.TemporaryDirectory(
+                prefix="localocr-relocated-", ignore_cleanup_errors=True
+            )
+        )
+        with context as directory:
+            moved = root if relocated else Path(directory) / "LocalOCR"
+            if not relocated:
+                shutil.copytree(root, moved)
             exe = moved / "LocalOCR-CLI/LocalOCR-CLI.exe"
             for rows in [3, 30]:
                 image = Path(directory) / f"synthetic-{rows}.png"
@@ -133,5 +142,6 @@ if __name__ == "__main__":
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--sha", required=True)
     parser.add_argument("--network-isolated", action="store_true")
+    parser.add_argument("--relocated", action="store_true")
     args = parser.parse_args()
-    qualify(args.root.resolve(), args.output, args.sha, args.network_isolated)
+    qualify(args.root.resolve(), args.output, args.sha, args.network_isolated, args.relocated)

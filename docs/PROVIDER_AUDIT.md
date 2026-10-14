@@ -145,3 +145,10 @@ MSVCP140*/VCRUNTIME140* из frozen GUI непосредственно в engine
 в component SHA256 manifest. Lite frozen CLI и real F16 CLI запускаются с PATH
 только System32 и без PYTHONHOME/PYTHONPATH/VIRTUAL_ENV; глобальные Python/uv/Git/
 Ollama/llama.cpp не используются. Чистая Windows VM всё ещё отдельная PENDING.
+
+v0.11: Linux/Windows 182 tests и frozen Lite restricted-PATH PASS. F16
+qualification имеет FAIL/WinError 5 при cleanup DLL, затем build cancelled.
+Изоляция перенесена на конкретные executable paths relocated CLI и engine;
+runner/control/прочие процессы сохраняют сеть. Перенос выполняется до firewall,
+повторная скрытая relocation исключена; cleanup не маскирует первичную ошибку.
+Это не Windows F16 PASS. Итоговый qualification evidence остаётся обязательным.
