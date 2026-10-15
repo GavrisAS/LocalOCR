@@ -3,7 +3,7 @@
 Source base: v0.13 / 9939875118e9d02f438a80a3cbf8b7fc53fdc275.
 Initial implementation reserved v0.14. A required final exception-redaction fix
 uses v0.15. The post-ready native GPU error audit required v0.16; earlier tags
-remain immutable.
+remain immutable. The zero-exit probe-output audit adds v0.17.
 Final exact commit, tag, CI/release results and artifact hashes belong to the local
 handoff evidence produced after the push, not to a version bump commit.
 
@@ -52,3 +52,9 @@ a native CUDA OOM and exits. Strict GPU preserves GPU_OOM and never starts CPU;
 ordinary completion text is discarded. This test is not hardware qualification.
 Windows frozen qualification now records model startup, each OCR request latency
 and full pipeline time separately from its actual --debug-http CLI trace.
+
+A zero exit status from --list-devices does not prove successful backend loading.
+On device-parse failure the bounded original stdout/stderr is preserved, with
+driver incompatibility / dependency load failure / no device / invalid probe
+distinguished. A normal loaded CPU DLL line is not diagnosed as a missing DLL.
+Probe and model-start timeouts also retain startup technical output.

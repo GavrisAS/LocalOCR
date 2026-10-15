@@ -169,7 +169,9 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
             while self.process.poll() is None:
                 self.check_cancel()
                 if time.monotonic() >= deadline:
-                    raise OCRServerError("GPU_PROBE_TIMEOUT")
+                    raise OCRServerError(
+                        "GPU_PROBE_TIMEOUT\n" + "\n".join(list(self.diagnostics))[-8192:]
+                    )
                 self.cancel.wait(0.05)
             self.reader.join(timeout=2)
             output = "\n".join(list(self.diagnostics))
@@ -177,7 +179,18 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
                 raise OCRServerError(
                     f"GPU probe failed: exit={self.process.returncode} {output[:4096]}"
                 )
-            return parse_devices(output, candidate.backend)
+            try:
+                return parse_devices(output, candidate.backend)
+            except ValueError as error:
+                reason = str(error)
+                if (
+                    "available devices:" not in output.lower()
+                    and failure_category(output) == "ENGINE_START_FAILED"
+                ):
+                    reason = "GPU_PROBE_INVALID: неподдерживаемый вывод --list-devices"
+                raise OCRServerError(
+                    f"{reason}\n--list-devices output:\n{output[-8192:] or '<empty>'}"
+                ) from error
         finally:
             self.close()
 
@@ -317,7 +330,10 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
                     self.suppress_network_events = False
                     self.settings = original
                 self.cancel.wait(0.05)
-            raise OCRServerError("Истекло время загрузки Embedded модели")
+            raise OCRServerError(
+                "Истекло время загрузки Embedded модели\n"
+                + "\n".join(list(self.diagnostics))[-8192:]
+            )
         except BaseException:
             self.close()
             raise

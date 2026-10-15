@@ -404,3 +404,39 @@ def test_request_construction_failure_emits_original_url(monkeypatch):
     assert "input=https://host.example:8443/prefix" in text
     assert "httpx.InvalidURL" in text and "Request build" in text
     assert "HTTP →" not in text
+
+
+@pytest.mark.parametrize(
+    "backend,output,category_label",
+    [
+        (
+            "cuda",
+            "CUDA error: CUDA driver version is insufficient for CUDA runtime version\nAvailable devices:",
+            "GPU_DRIVER_INCOMPATIBLE",
+        ),
+        (
+            "cuda",
+            "load_backend: failed to load ggml-cuda.dll\nAvailable devices:",
+            "GPU_RUNTIME_OR_DRIVER_MISSING",
+        ),
+        ("cuda", "loaded CPU backend from ggml-cpu.dll\nAvailable devices:", "GPU_NOT_FOUND"),
+        ("vulkan", "Available devices:\n Vulkan0: llvmpipe (software)", "GPU_NOT_FOUND"),
+        ("cuda", "incompatible list-devices output", "GPU_PROBE_INVALID"),
+    ],
+)
+def test_zero_exit_probe_preserves_driver_and_dll_diagnostics(
+    fake_engine,  # noqa: F811
+    backend,
+    output,
+    category_label,  # noqa: F811
+):
+    from localocr.devices import RuntimeCandidate, failure_category
+
+    settings, script, _ = fake_engine
+    script.write_text("import sys\nprint(" + repr(output) + ")\nsys.exit(0)\n")
+    client = EmbeddedOCRProvider(settings)
+    with pytest.raises((ValueError, OCRServerError)) as caught:
+        client.probe(RuntimeCandidate(backend, settings.paths()[0]))
+    assert output in str(caught.value)
+    assert failure_category(str(caught.value)) == category_label
+    assert client.process is None and client.reader is None

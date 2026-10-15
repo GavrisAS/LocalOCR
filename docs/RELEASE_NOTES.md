@@ -39,3 +39,8 @@ remain chained. Invalid-URL constructor errors explicitly report URL_INVALID.
 Native GPU OOM/device errors occurring after readiness are preserved as technical
 causes of failed inference; ordinary OCR output is discarded. Windows qualification
 records actual model-startup and per-request inference timing separately.
+
+GPU discovery preserves original --list-devices diagnostics even when the command
+exits zero with no usable device: driver mismatch, failed backend DLL loading and
+software renderers remain observable. Startup timeouts include bounded technical
+engine output. No GPU claim follows from a successful probe exit code alone.

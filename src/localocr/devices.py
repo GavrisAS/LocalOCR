@@ -96,9 +96,46 @@ def failure_category(detail: str) -> str:
     ):
         return "GPU_ARCH_UNSUPPORTED"
     if any(
-        word in text for word in ("dll", "shared librar", "c0000135", "3221225781", "-1073741515")
+        word in text
+        for word in (
+            "driver version is insufficient",
+            "cuda_error_insufficient_driver",
+            "cudaerrorinsufficientdriver",
+            "unsupported display driver / cuda driver",
+            "cuda_error_system_driver_mismatch",
+            "vk_error_incompatible_driver",
+        )
+    ):
+        return "GPU_DRIVER_INCOMPATIBLE"
+    loader_failure = any(
+        any(marker in line for marker in ("dll", "shared librar", "shared object", "libcuda.so"))
+        and any(
+            marker in line
+            for marker in (
+                "failed to load",
+                "could not load",
+                "cannot load",
+                "cannot open",
+                "could not open",
+                "not found",
+                "missing",
+                "could not be found",
+            )
+        )
+        for line in text.splitlines()
+    )
+    if loader_failure or any(
+        word in text
+        for word in (
+            "c0000135",
+            "3221225781",
+            "-1073741515",
+            "winerror 126",
+        )
     ):
         return "GPU_RUNTIME_OR_DRIVER_MISSING"
+    if "gpu_probe_invalid" in text:
+        return "GPU_PROBE_INVALID"
     if "offload_unconfirmed" in text:
         return "GPU_OFFLOAD_UNCONFIRMED"
     if "физическое gpu не найдено" in text:
