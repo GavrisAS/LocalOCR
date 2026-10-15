@@ -124,8 +124,10 @@ class OllamaClient:
             raise OCRServerError(detail) from error
         deadline = time.monotonic() + self.settings.timeout
         timeout = httpx.Timeout(self.settings.timeout, connect=5, pool=5)
+        verify = getattr(self.settings, "ssl_verify", True)
+        trust_env = getattr(self.settings, "trust_env", False)
         async with httpx.AsyncClient(
-            trust_env=False, follow_redirects=False, verify=True, timeout=timeout
+            trust_env=trust_env, follow_redirects=False, verify=verify, timeout=timeout
         ) as client:
             for attempt in range(self.settings.retries + 1):
                 self.check_cancel()
@@ -159,7 +161,7 @@ class OllamaClient:
                         )
                         emit(
                             self,
-                            f"Настройки: input={self.settings.url} ; base={base} ; hostname={request.url.host} ; port={request.url.port} ; path={request.url.path} ; prefix={urlsplit(self.settings.url).path or '/'} ; TLS verify=True ; trust_env=False (proxy env не используется) ; redirects=False ; connect=5s ; read/write/total={self.settings.timeout}s ; pool=5s ; token={'задан' if getattr(self.settings, 'api_token', '') else 'не задан'} ; Authorization Bearer={'отправляется' if 'Authorization' in request.headers else 'нет'}",
+                            f"Настройки: input={self.settings.url} ; base={base} ; hostname={request.url.host} ; port={request.url.port} ; path={request.url.path} ; prefix={urlsplit(self.settings.url).path or '/'} ; TLS verify={verify} ; trust_env={trust_env} ; redirects=False ; connect=5s ; read/write/total={self.settings.timeout}s ; pool=5s ; token={'задан' if getattr(self.settings, 'api_token', '') else 'не задан'} ; Authorization Bearer={'отправляется' if 'Authorization' in request.headers else 'нет'}",
                         )
                         emit(
                             self,

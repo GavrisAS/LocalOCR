@@ -43,6 +43,8 @@ def selected_settings(
     use_config,
     timeout=300,
     device=None,
+    ssl_verify=None,
+    trust_env=None,
 ):
     from localocr.config import AppConfig
 
@@ -60,6 +62,10 @@ def selected_settings(
         config.openwebui_model = model or config.openwebui_model
         config.api_token = config.api_token if api_token is None else api_token
         config.openwebui_api = openwebui_api or config.openwebui_api
+        if ssl_verify is not None:
+            config.ssl_verify = ssl_verify
+        if trust_env is not None:
+            config.trust_env = trust_env
     elif config.provider == "embedded":
         return EmbeddedSettings(
             precision=precision or config.precision,
@@ -87,6 +93,8 @@ def doctor(
     use_config: bool = False,
     device: str | None = None,
     debug_http: bool = False,
+    ssl_verify: Annotated[bool | None, typer.Option("--ssl-verify/--no-ssl-verify")] = None,
+    trust_env: Annotated[bool | None, typer.Option("--trust-env/--no-trust-env")] = None,
 ):
     setup_logging()
     client = None
@@ -104,6 +112,8 @@ def doctor(
             mmproj_path,
             use_config,
             device=device,
+            ssl_verify=ssl_verify,
+            trust_env=trust_env,
         )
         client = create_provider(settings, on_network_event=typer.echo if debug_http else None)
         typer.echo(client.doctor())
@@ -136,6 +146,8 @@ def convert(
     use_config: bool = False,
     device: str | None = None,
     debug_http: bool = False,
+    ssl_verify: Annotated[bool | None, typer.Option("--ssl-verify/--no-ssl-verify")] = None,
+    trust_env: Annotated[bool | None, typer.Option("--trust-env/--no-trust-env")] = None,
     output_dir: Path | None = None,
     recursive: bool = False,
     overwrite: bool = False,
@@ -160,6 +172,8 @@ def convert(
                 use_config,
                 timeout,
                 device=device,
+                ssl_verify=ssl_verify,
+                trust_env=trust_env,
             ),
             output_dir,
             recursive,

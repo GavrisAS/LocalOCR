@@ -48,7 +48,10 @@ def test_selection_fallback_and_strict(fake_engine, monkeypatch):  # noqa: F811
         EmbeddedOCRProvider, "probe", lambda *args: (_ for _ in ()).throw(ValueError("DLL missing"))
     )
     with EmbeddedOCRProvider(replace(settings, device_mode="auto")) as client:
+        statuses = []
+        client.on_runtime_status = statuses.append
         assert "fallback" in client.doctor()
+        assert statuses == [client.runtime_status]
         assert "DLL missing" in client.runtime_status
     with EmbeddedOCRProvider(replace(settings, device_mode="gpu")) as client:
         with pytest.raises(OCRServerError, match="DLL missing"):
@@ -361,9 +364,12 @@ def test_native_gpu_oom_after_ready_keeps_technical_cause(fake_engine, monkeypat
     script.write_text("MODE='ready'\n" + body)
     monkeypatch.setattr(EmbeddedOCRProvider, "probe", lambda *args: ("CUDA0", "GPU fixture"))
     with EmbeddedOCRProvider(replace(settings, device_mode="gpu")) as client:
+        statuses = []
+        client.on_runtime_status = statuses.append
         assert "подтверждён" in client.doctor()
         with pytest.raises(OCRServerError, match="GPU_OOM"):
             client.recognize(b"image")
+        assert "не подтверждено" in statuses[-1]
         assert client.process is None and not client.owns_lock
         assert "OCR_PRIVATE_CONTENT_NOT_FOR_LOG" not in "\n".join(
             [*client.diagnostics, *client.runtime_errors]

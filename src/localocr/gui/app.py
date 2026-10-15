@@ -4,10 +4,11 @@ import sys
 from pathlib import Path
 from threading import Event
 
-from PySide6.QtCore import QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QThread, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
@@ -34,6 +35,7 @@ class Worker(QThread):
     result = Signal(object)
     error = Signal(str)
     network = Signal(str)
+    runtime_status = Signal(str)
 
     def __init__(self, folder: str, settings, check=False):
         super().__init__()
@@ -44,7 +46,12 @@ class Worker(QThread):
         try:
             settings = self.settings
             if self.check:
-                client = create_provider(settings, self.cancel, on_network_event=self.network.emit)
+                client = create_provider(
+                    settings,
+                    self.cancel,
+                    on_network_event=self.network.emit,
+                    on_runtime_status=self.runtime_status.emit,
+                )
                 try:
                     self.result.emit(client.doctor())
                 finally:
@@ -56,12 +63,15 @@ class Worker(QThread):
                         settings,
                         cancel=self.cancel,
                         on_network_event=self.network.emit,
+                        on_runtime_status=self.runtime_status.emit,
                         progress=lambda a, b, c: self.progress.emit(a, b, c),
                     )
                 )
         except Cancelled:
+            self.runtime_status.emit("Embedded: операция отменена; состояние не подтверждено")
             self.error.emit("Операция отменена")
         except Exception as error:
+            self.runtime_status.emit("Embedded: ошибка; состояние не подтверждено")
             self.error.emit(redact(self.settings, str(error)))
 
 
@@ -91,6 +101,10 @@ class Window(QMainWindow):
         self.api.addItem("Ollama Proxy", "proxy")
         self.api.addItem("Chat Completions", "chat")
         self.api.setCurrentIndex(max(0, self.api.findData(config.openwebui_api)))
+        self.ssl_verify = QCheckBox("Проверять SSL/TLS-сертификат")
+        self.ssl_verify.setChecked(config.ssl_verify)
+        self.trust_env = QCheckBox("Использовать системный прокси")
+        self.trust_env.setChecked(config.trust_env)
         self.precision = QComboBox()
         self.precision.addItem("F16 (основной)", "f16")
         from localocr.embedded import EmbeddedSettings
@@ -131,6 +145,8 @@ class Window(QMainWindow):
                 ("Model ID", self.web_model),
                 ("API-токен", self.token),
                 ("Тип API", self.api),
+                ("", self.ssl_verify),
+                ("", self.trust_env),
             ],
             "embedded": [
                 ("Набор весов", self.precision),
@@ -181,6 +197,8 @@ class Window(QMainWindow):
             openwebui_api=self.api.currentData(),
             precision=self.precision.currentData(),
             embedded_device=self.device.currentData(),
+            ssl_verify=self.ssl_verify.isChecked(),
+            trust_env=self.trust_env.isChecked(),
         )
 
     def controls(self):
@@ -196,6 +214,8 @@ class Window(QMainWindow):
             self.web_model,
             self.token,
             self.api,
+            self.ssl_verify,
+            self.trust_env,
             self.precision,
             self.device,
         ]
@@ -214,6 +234,9 @@ class Window(QMainWindow):
             self.status.appendPlainText(f"Не удалось сохранить настройки: {error}")
         self.bar.setRange(0, 0)
         self.worker = Worker(self.folder.text(), self.current_config().settings(), check)
+        if self.provider.currentData() == "embedded":
+            self.embedded_status.setText("Embedded: проверка runtime…")
+            self.worker.runtime_status.connect(self.update_embedded_status)
         self.worker.network.connect(self.status.appendPlainText)
         self.worker.progress.connect(self.update_progress)
         self.worker.result.connect(self.completed)
@@ -223,6 +246,10 @@ class Window(QMainWindow):
             control.setEnabled(False)
         self.stop.setEnabled(True)
         self.worker.start()
+
+    @Slot(str)
+    def update_embedded_status(self, message):
+        self.embedded_status.setText(message)
 
     def update_progress(self, done, total, message):
         self.bar.setRange(0, total + 1)

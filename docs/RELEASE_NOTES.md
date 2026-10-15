@@ -29,7 +29,9 @@ for the exact Windows CPU/assembled bundle result. No Windows GPU VERIFIED claim
 
 GUI connection/OCR log now reports actual HTTP requests, response fragments/status,
 TLS/DNS/socket causes and timeout stages, with token and image omission. System
-proxy remains disabled (trust_env=False), redirects disabled, TLS verified. Live
+proxy is disabled by default (trust_env=False), redirects disabled, TLS verified
+by default. OpenWebUI Proxy and Chat permit explicit TLS verification and system
+proxy settings in GUI/config/CLI; Direct and Embedded keep fixed safe defaults. Live
 user OpenWebUI connection remains PENDING without its configured server credentials.
 
 Final diagnostics correction: configured tokens are omitted from final exception
@@ -50,3 +52,9 @@ in one frozen batch, recording one model startup and per-image/per-request laten
 One bounded build-time retry is permitted only for a startup deadline, retaining
 first-attempt evidence; synthetic gold failures are not retried. Runtime OCR retry
 semantics and the F16 pair are unchanged.
+
+Corrective connection settings: typed config migration retains valid fields and plain
+JSON tokens; boolean ssl_verify=True and trust_env=False persist independently.
+CLI supports --ssl-verify/--no-ssl-verify and --trust-env/--no-trust-env.
+Embedded has a dedicated Qt signal for actual selected runtime, mode, device,
+full offload evidence or CPU, and Auto fallback reasons; errors clear stale status.

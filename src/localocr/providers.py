@@ -11,6 +11,7 @@ from localocr.ollama import OCRServerError, OllamaClient, Settings
 
 class OCRProvider(Protocol):
     on_network_event: object
+    on_runtime_status: object
 
     def doctor(self) -> str: ...
     def recognize(self, image: bytes, *, single_table: bool = False) -> str: ...
@@ -27,8 +28,12 @@ class OpenWebUISettings:
     retries: int = 1
     api_token: str = ""
     api: str = "proxy"
+    ssl_verify: bool = True
+    trust_env: bool = False
 
     def validate(self):
+        if type(self.ssl_verify) is not bool or type(self.trust_env) is not bool:
+            raise ValueError("ssl_verify и trust_env должны быть boolean")
         parsed = urlsplit(self.url)
         if (
             parsed.scheme not in {"http", "https"}
@@ -169,7 +174,9 @@ def chat_text(data, *, single_table=False) -> str:
         raise OCRServerError("Некорректный Chat Completions OCR-ответ") from error
 
 
-def create_provider(settings, cancel: Event | None = None, on_network_event=None) -> OCRProvider:
+def create_provider(
+    settings, cancel: Event | None = None, on_network_event=None, on_runtime_status=None
+) -> OCRProvider:
     from localocr.network import category, emit, exception_detail
 
     try:
@@ -184,6 +191,7 @@ def create_provider(settings, cancel: Event | None = None, on_network_event=None
             )
         raise
     client.on_network_event = on_network_event
+    client.on_runtime_status = on_runtime_status
     return client
 
 

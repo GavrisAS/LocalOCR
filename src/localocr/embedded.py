@@ -129,7 +129,7 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
                 self.load_seconds = time.monotonic() - started
                 reason = "; ".join(failures)
                 self.runtime_status = (
-                    f"Embedded {self.embedded.precision.upper()} · {candidate.backend.upper()} · {name} · "
+                    f"Embedded {self.embedded.precision.upper()} · режим={self.embedded.device_mode.upper()} · {candidate.backend.upper()} · {name} · "
                     + ("GPU offload: подтверждён (LLM + vision)" if self.offload else "выбран CPU")
                     + (
                         f" · {self.embedded.device_mode.upper()} fallback: {reason}"
@@ -138,6 +138,9 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
                     )
                     + f" · model load={self.load_seconds:.3f}s"
                 )
+                callback = getattr(self, "on_runtime_status", None)
+                if callback:
+                    callback(self.runtime_status)
                 emit(self, self.runtime_status)
                 return self.runtime_status
             except (OSError, ValueError, OCRServerError) as error:
@@ -358,6 +361,9 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
                 single_table=single_table,
             )
         except BaseException as error:
+            callback = getattr(self, "on_runtime_status", None)
+            if callback:
+                callback("Embedded: ошибка распознавания; состояние не подтверждено")
             self.close()
             if isinstance(error, OCRServerError) and self.runtime_errors:
                 raise OCRServerError(self.runtime_failure(str(error))) from error

@@ -240,6 +240,7 @@ def convert(
     cancel: Event | None = None,
     progress: Progress | None = None,
     on_network_event=None,
+    on_runtime_status=None,
 ) -> list[JobResult]:
     paths = discover(source, recursive)
     output_dir = output_dir or ((source if source.is_dir() else source.parent) / "results")
@@ -253,6 +254,8 @@ def convert(
         if on_network_event
         else create_provider(settings, cancel)
     )
+    if on_runtime_status:
+        client.on_runtime_status = on_runtime_status
     try:
         client.doctor()
         output_dir.mkdir(parents=True, exist_ok=True)

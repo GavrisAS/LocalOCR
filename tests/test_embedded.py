@@ -144,3 +144,46 @@ def test_generated_key_with_leading_dash_is_safe(fake_engine, monkeypatch):
     with EmbeddedOCRProvider(fake_engine[0]) as client:
         assert "CPU" in client.doctor()
         assert "<table>" in client.recognize(b"image")
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_gui_runtime_status_main_thread(fake_engine, tmp_path, monkeypatch, batch):
+    import time
+
+    from PIL import Image
+    from PySide6.QtCore import QThread, Slot
+    from PySide6.QtWidgets import QApplication
+
+    from localocr.gui.app import Window
+
+    app = QApplication.instance() or QApplication([])
+    threads = []
+
+    class CheckedWindow(Window):
+        @Slot(str)
+        def update_embedded_status(self, message):
+            threads.append(QThread.currentThread())
+            super().update_embedded_status(message)
+
+    window = CheckedWindow()
+    window.provider.setCurrentIndex(window.provider.findData("embedded"))
+    window.folder.setText(str(tmp_path))
+    Image.new("RGB", (100, 100), "white").save(tmp_path / "input.png")
+    monkeypatch.setattr("localocr.config.AppConfig.settings", lambda self: fake_engine[0])
+    window.launch(not batch)
+    deadline = time.monotonic() + 8
+    while window.worker is not None and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert window.worker is None
+    assert threads and all(thread == app.thread() for thread in threads)
+    assert "режим=CPU" in window.embedded_status.text()
+    assert "выбран CPU" in window.embedded_status.text()
+    fake_engine[0].paths()[0].unlink()
+    window.launch(True)
+    deadline = time.monotonic() + 4
+    while window.worker is not None and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert "не подтверждено" in window.embedded_status.text()
+    window.close()

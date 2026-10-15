@@ -18,6 +18,8 @@ class AppConfig:
     openwebui_model: str = "glm-ocr:latest"
     api_token: str = ""
     openwebui_api: str = "proxy"
+    ssl_verify: bool = True
+    trust_env: bool = False
     precision: str = "f16"
     embedded_device: str = "auto"
 
@@ -36,6 +38,8 @@ class AppConfig:
                 model=self.openwebui_model,
                 api_token=self.api_token,
                 api=self.openwebui_api,
+                ssl_verify=self.ssl_verify,
+                trust_env=self.trust_env,
                 timeout=timeout,
             )
         if self.provider == "ollama":
@@ -52,11 +56,17 @@ def config_dir() -> Path:
 def load_config() -> AppConfig:
     try:
         data = json.loads((config_dir() / "config.json").read_text(encoding="utf-8"))
-        if not isinstance(data, dict) or any(not isinstance(v, str) for v in data.values()):
+        if not isinstance(data, dict):
             return AppConfig()
         from dataclasses import fields
 
-        return AppConfig(**{f.name: data[f.name] for f in fields(AppConfig) if f.name in data})
+        return AppConfig(
+            **{
+                f.name: data[f.name]
+                for f in fields(AppConfig)
+                if f.name in data and type(data[f.name]) is type(f.default)
+            }
+        )
     except OSError, ValueError:
         return AppConfig()
 
