@@ -40,3 +40,11 @@ ZIP и SHA256 публикуются только после проверок. C
 Рекомендуемая следующая работа: независимый эталон OCR, таблицы со слабыми
 границами, перенос vertical spans через границы фрагментов, реальный отдельный
 LAN HTTPS сервер. Техническая успешность конвейера не равна оценке точности OCR.
+
+## GPU / diagnostics continuation
+
+See `docs/GPU_DIAGNOSTICS_AUDIT.md` for source-base assumptions, measured Linux
+RTX A4000 evidence and Windows GPU limitations. The local `.evidence/audit-v014`
+handoff contains the exact committed source snapshot, machine reports, GUI mock
+log/screenshot and remote CI/release evidence when available. This directory is
+ignored by Git. It must not include model weights, engine binaries or user images.

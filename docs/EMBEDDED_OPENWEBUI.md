@@ -69,3 +69,46 @@ parallel 1 и `--offline` — CPU конфигурация кандидата.
 
 Все OpenWebUI результаты на mocks — техническая реализация; реальный сервер
 PENDING. Историческая таблица 35×9 — QUALITY_PENDING до независимого human gold.
+
+## Auto / GPU / CPU
+
+GUI exposes exactly three modes for Embedded only. CLI doctor/convert accept
+`--device auto|gpu|cpu`; supplying it for a server provider is a configuration error.
+Saved `embedded_device` defaults to Auto for old config.json. Explicit CLI selection
+wins over saved settings. Settings are frozen for the worker lifetime.
+CUDA then Vulkan are probed from their own pinned runtime folders; CPU is permitted
+only in Auto/CPU. Legacy `embedded/engine` remains a supported CPU bundle.
+Full LLM layer offload and CLIP GPU backend evidence are mandatory; partial offload
+is rejected even in GPU mode. No GPU claim is based only on nvidia-smi or file presence.
+Startup failures include the runtime error; Auto tries the next candidate once.
+GPU inference failures during an existing batch fail the item, without replaying the
+batch on CPU. Cancellation terminates the owned process and releases its lock.
+
+## Почему не подключается OpenWebUI?
+
+При базе `https://host:8443/prefix` ожидаются точные маршруты:
+
+| API | Проверка | OCR |
+| --- | --- | --- |
+| Proxy | `GET https://host:8443/prefix/ollama/api/tags` | `POST https://host:8443/prefix/ollama/api/generate` |
+| Chat | `GET https://host:8443/prefix/api/models` | `POST https://host:8443/prefix/api/chat/completions` |
+
+GUI log показывает реально построенный httpx Request: метод, URL, базу, prefix,
+порт, model ID, попытку, параметры таймаута, наличие Bearer, HTTP status, Content-Type,
+длительность и ограниченный фрагмент ошибки. При отказе до HTTP показывается цепочка
+исключений: например `DNS_ERROR`/socket.gaierror, `CONNECT_REFUSED`/errno,
+`TLS_CERTIFICATE_VERIFY_FAILED`/ssl.SSLCertVerificationError. Таймауты connect/read/
+write/pool/deadline различаются. Неизвестная причина остаётся NETWORK_ERROR.
+HTTP 401 → проверьте токен; 403 → доступ; 404 → путь и API; 502 → изучите ответ
+reverse proxy/upstream. Это возможные объяснения наблюдаемого статуса.
+Redirect показывает Location и не выполняется. Префикс не исправляется по догадке.
+`trust_env=False` отключает proxy из окружения, TLS verify=True; отключать TLS или
+пробовать HTTP автоматически приложение не будет.
+
+Лог находится в текущем QPlainTextEdit (штатное выделение/копирование) и файле
+`localocr.log` рядом с config.json: `%LOCALAPPDATA%\LocalOCR` на Windows,
+`$XDG_CONFIG_HOME/LocalOCR` либо `~/.config/LocalOCR` на Linux. CLI имеет `--debug-http`.
+Токен хранится обычным текстом в config.json и исключается из диагностических строк.
+HTTP 200 не означает OCR PASS: список моделей, видимость model ID и настоящий OCR
+проверяются отдельно; Chat сохраняет мягкую проверку видимости.
+Реальный пользовательский OpenWebUI без URL/токена в среде остаётся PENDING.

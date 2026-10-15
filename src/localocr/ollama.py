@@ -12,6 +12,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from localocr.network import category, emit, exception_detail, payload_summary
+
 
 class OCRServerError(RuntimeError):
     pass
@@ -112,7 +114,14 @@ class OllamaClient:
         self.close()
 
     async def _request_async(self, method: str, endpoint: str, payload=None):
-        base, headers, extensions = await self.route()
+        try:
+            base, headers, extensions = await self.route()
+        except Exception as error:
+            detail = f"{category(error)} · URL validation / DNS · input={self.settings.url} · {exception_detail(error)}"
+            emit(self, detail)
+            if isinstance(error, ValueError):
+                raise
+            raise OCRServerError(detail) from error
         deadline = time.monotonic() + self.settings.timeout
         timeout = httpx.Timeout(self.settings.timeout, connect=5, pool=5)
         async with httpx.AsyncClient(
@@ -120,20 +129,57 @@ class OllamaClient:
         ) as client:
             for attempt in range(self.settings.retries + 1):
                 self.check_cancel()
+                status_seen = None
                 try:
                     async with asyncio.timeout(max(0.01, deadline - time.monotonic())):
-                        async with client.stream(
+                        request = client.build_request(
                             method,
                             base + endpoint,
                             json=payload,
                             headers=headers,
                             extensions=extensions,
-                        ) as response:
-                            if 300 <= response.status_code < 400:
-                                raise OCRServerError(
-                                    f"Перенаправление {self.server_name} запрещено"
+                        )
+                        operation = "doctor" if method == "GET" else "recognize"
+                        emit(
+                            self,
+                            f"{self.server_name} · {operation} · попытка {attempt + 1}/{self.settings.retries + 1}",
+                        )
+                        emit(
+                            self,
+                            f"Настройки: input={self.settings.url} ; base={base} ; hostname={request.url.host} ; port={request.url.port} ; path={request.url.path} ; prefix={urlsplit(self.settings.url).path or '/'} ; TLS verify=True ; trust_env=False (proxy env не используется) ; redirects=False ; connect=5s ; read/write/total={self.settings.timeout}s ; pool=5s ; token={'задан' if getattr(self.settings, 'api_token', '') else 'не задан'} ; Authorization Bearer={'отправляется' if 'Authorization' in request.headers else 'нет'}",
+                        )
+                        emit(
+                            self,
+                            f"HTTP → {request.method} {request.url} ; {payload_summary(payload)}",
+                        )
+                        started = time.monotonic()
+                        response = await client.send(request, stream=True)
+                        status_seen = response.status_code
+                        network_stream = response.extensions.get("network_stream")
+                        if network_stream is not None:
+                            peer = network_stream.get_extra_info("server_addr")
+                            if peer is not None:
+                                emit(self, f"Transport peer (наблюдаемый): {peer}")
+                        try:
+                            emit(
+                                self,
+                                f"HTTP ← {response.status_code} {response.reason_phrase} ; content-type={response.headers.get('content-type', '')} ; elapsed={time.monotonic() - started:.3f}s",
+                            )
+                            if response.status_code >= 300:
+                                fragment = bytearray()
+                                async for chunk in response.aiter_bytes():
+                                    fragment.extend(chunk[: 4096 - len(fragment)])
+                                    if len(fragment) >= 4096:
+                                        break
+                                emit(
+                                    self,
+                                    f"Ответ сервера (фрагмент): {fragment.decode('utf-8', errors='replace')}",
                                 )
-                            response.raise_for_status()
+                                if 300 <= response.status_code < 400:
+                                    detail = f"HTTP_REDIRECT Location={response.headers.get('location', '')} ; redirects запрещены"
+                                    emit(self, detail)
+                                    raise OCRServerError(detail)
+                                response.raise_for_status()
                             body = bytearray()
                             async for chunk in response.aiter_bytes():
                                 self.check_cancel()
@@ -142,17 +188,31 @@ class OllamaClient:
                                     raise OCRServerError(
                                         f"Ответ {self.server_name} слишком большой"
                                     )
+                        finally:
+                            await response.aclose()
                     try:
                         result = json.loads(body)
                     except (ValueError, UnicodeError) as error:
-                        raise OCRServerError(f"Некорректный JSON от {self.server_name}") from error
+                        raise OCRServerError(
+                            f"{'EMPTY_RESPONSE' if not body else 'INVALID_JSON'} от {self.server_name}"
+                        ) from error
                     result = self.normalize_result(result)
                     if not isinstance(result, dict) or result.get("error"):
-                        raise OCRServerError(f"Ошибка API {self.server_name}")
+                        raise OCRServerError(f"MALFORMED_API_RESPONSE от {self.server_name}")
+                    emit(
+                        self,
+                        f"Результат HTTP API: PASS ; elapsed_total={time.monotonic() - started:.3f}s (доступ модели/OCR проверяется отдельно)",
+                    )
                     return result
                 except (httpx.TimeoutException, TimeoutError) as error:
-                    raise OCRServerError(f"Истекло время ожидания {self.server_name}") from error
+                    detail = f"{category(error)} ; истекло время ожидания ; HTTP status: {status_seen if status_seen is not None else 'нет'} ; {exception_detail(error)}"
+                    emit(self, detail)
+                    raise OCRServerError(detail) from error
                 except httpx.HTTPStatusError as error:
+                    emit(
+                        self,
+                        f"FAIL / HTTP_{error.response.status_code} ; {exception_detail(error)}",
+                    )
                     if error.response.status_code >= 500 and attempt < self.settings.retries:
                         await asyncio.sleep(0.2)
                         continue
@@ -160,12 +220,12 @@ class OllamaClient:
                         f"{self.server_name} HTTP {error.response.status_code}"
                     ) from error
                 except httpx.RequestError as error:
+                    detail = f"{category(error)} ; HTTP status: {status_seen if status_seen is not None else 'нет'} ; {exception_detail(error)}"
+                    emit(self, detail)
                     if attempt < self.settings.retries:
                         await asyncio.sleep(0.2)
                         continue
-                    raise OCRServerError(
-                        f"{self.server_name} недоступен: проверьте сервер и адрес"
-                    ) from error
+                    raise OCRServerError(detail) from error
         raise OCRServerError(f"{self.server_name} не ответил")
 
     async def _cancellable(self, method, endpoint, payload):
@@ -185,17 +245,29 @@ class OllamaClient:
 
     def request(self, method: str, endpoint: str, payload=None):
         self.check_cancel()
-        return asyncio.run(self._cancellable(method, endpoint, payload))
+        try:
+            return asyncio.run(self._cancellable(method, endpoint, payload))
+        except Cancelled:
+            emit(self, "CANCELLED · запрос отменён")
+            raise
+        except OCRServerError as error:
+            emit(self, f"Результат: FAIL · {exception_detail(error)}")
+            raise
 
     def doctor(self):
         data = self.request("GET", "/api/tags")
         models = data.get("models")
         if not isinstance(models, list):
-            raise OCRServerError("Некорректный список моделей Ollama")
+            raise OCRServerError("MALFORMED_API_RESPONSE: Некорректный список моделей Ollama")
         if not any(
             isinstance(model, dict) and model.get("name") == self.settings.model for model in models
         ):
+            emit(
+                self,
+                f"MODEL_NOT_FOUND/NOT_VISIBLE · HTTP API доступен, модель {self.settings.model} не видна",
+            )
             raise OCRServerError(f"Модель {self.settings.model} не установлена на сервере Ollama")
+        emit(self, f"doctor PASS · модель {self.settings.model} видна; OCR ещё не выполнялся")
         return f"Подключено · {self.settings.model}"
 
     def recognize(self, image: bytes, *, single_table: bool = False) -> str:
@@ -218,7 +290,7 @@ class OllamaClient:
         )
         text = data.get("response")
         if not isinstance(text, str) or not text.strip():
-            raise OCRServerError("Пустой OCR-ответ")
+            raise OCRServerError("EMPTY_RESPONSE: Пустой OCR-ответ")
         if data.get("done") is not True or data.get("done_reason") == "length":
             raise OCRServerError("Усечённый ответ OCR; требуется меньший фрагмент")
         # Ollama omits the matched stop sequence from response. Restore only that

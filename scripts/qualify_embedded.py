@@ -73,6 +73,28 @@ def qualify(root: Path, output: Path, sha: str, isolated: bool, relocated=False)
             if not relocated:
                 shutil.copytree(root, moved)
             exe = moved / "LocalOCR-CLI/LocalOCR-CLI.exe"
+            evidence["device_checks"] = []
+            for mode in ("cpu", "auto", "gpu"):
+                check = subprocess.run(
+                    [str(exe), "doctor", "--provider", "embedded", "--device", mode],
+                    text=True,
+                    encoding="utf-8",
+                    capture_output=True,
+                    timeout=600,
+                    env=isolated_environment(),
+                )
+                evidence["device_checks"].append(
+                    {
+                        "mode": mode,
+                        "exit_code": check.returncode,
+                        "stdout": check.stdout,
+                        "stderr": check.stderr,
+                    }
+                )
+                if check.returncode != (3 if mode == "gpu" else 0):
+                    raise ValueError(
+                        f"CPU/no-GPU runner device policy failed: {mode}: {check.stdout} {check.stderr}"
+                    )
             for rows in [3, 30]:
                 image = Path(directory) / f"synthetic-{rows}.png"
                 expected = synthetic(image, rows)
@@ -87,6 +109,8 @@ def qualify(root: Path, output: Path, sha: str, isolated: bool, relocated=False)
                         "f16",
                         "--timeout",
                         "600",
+                        "--device",
+                        "cpu",
                     ],
                     text=True,
                     encoding="utf-8",
@@ -111,6 +135,11 @@ def qualify(root: Path, output: Path, sha: str, isolated: bool, relocated=False)
                     for r in range(rows)
                 ]
                 shape = [sheet.max_row, sheet.max_column]
+                values = [[sheet.cell(r + 1, c + 1).value for c in range(3)] for r in range(rows)]
+                types = [
+                    [sheet.cell(r + 1, c + 1).data_type for c in range(3)] for r in range(rows)
+                ]
+                expected_values = [[row[0], int(row[1]), float(row[2])] for row in expected]
                 book.close()
                 mismatches = sum(
                     a != b for er, ar in zip(expected, observed) for a, b in zip(er, ar)
@@ -120,11 +149,18 @@ def qualify(root: Path, output: Path, sha: str, isolated: bool, relocated=False)
                         "rows": rows,
                         "shape": shape,
                         "text_mismatches": mismatches,
+                        "values_match": values == expected_values,
+                        "cell_types": types,
                         "xlsx_sha256": hashlib.sha256(xlsx.read_bytes()).hexdigest(),
                         "exit_code": result.returncode,
                     }
                 )
-                if shape != [rows, 3] or mismatches:
+                if (
+                    shape != [rows, 3]
+                    or mismatches
+                    or values != expected_values
+                    or any(t != ["s", "n", "n"] for t in types)
+                ):
                     raise ValueError("Synthetic OCR cells/shape differ from known source")
             evidence["status"] = "PASS" if sys.platform == "win32" and isolated else "PARTIAL"
     except Exception as error:

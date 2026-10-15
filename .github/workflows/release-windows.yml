@@ -84,7 +84,7 @@ jobs:
             ./scripts/qualify_windows.ps1 -Root dist/assembled-validation/LocalOCR -Output dist/assembled-qualification.json -Sha '${{ github.sha }}'
             Remove-Item dist/assembled-validation -Recurse -Force
             Copy-Item dist/portable-assets/* dist/release/
-            Add-Content dist/release-notes.md "`nPortable F16: Windows CPU synthetic 3/30 rows PASS; assembled split assets included."
+            Add-Content dist/release-notes.md "`nPortable F16: Windows CPU synthetic 3/30 rows PASS; GPU-capable candidate, GPU_HARDWARE_PENDING (Windows); assembled split assets included."
           } catch {
             Write-Warning $_
             if (-not (Test-Path dist/f16-qualification.json)) {
@@ -124,3 +124,40 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Release failed' }
           uv run python scripts/verify_release.py --tag $tag --sha '${{ github.sha }}' --require-existing
           if ($LASTEXITCODE -ne 0) { throw 'Published release verification failed' }
+  verify-published-portable:
+    needs: [reserve, build]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.13.0'
+      - run: uv python install 3.14
+      - run: uv sync --locked
+      - name: Download immutable published parts and qualify in a separate path
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = '${{ needs.reserve.outputs.tag }}'
+          $assets = gh release view $tag --json assets --jq '.assets[].name'
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect published release' }
+          if ($assets -notcontains 'portable-manifest.json') {
+            @{ status = 'PENDING'; reason = 'No published Portable asset'; tag = $tag } | ConvertTo-Json | Set-Content published-qualification.json
+            exit 0
+          }
+          gh release download $tag --dir published-parts --pattern '*portable-f16.zip.part*' --pattern portable-manifest.json --pattern assemble_portable.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Published parts download failed' }
+          ./published-parts/assemble_portable.ps1 -Destination published-assembled
+          Remove-Item published-parts/*.part* -Force
+          ./scripts/qualify_windows.ps1 -Root published-assembled/LocalOCR -Output published-qualification.json -Sha '${{ github.sha }}'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: published-portable-evidence-attempt-${{ github.run_attempt }}
+          path: |
+            published-qualification.json
+            published-parts/portable-manifest.json

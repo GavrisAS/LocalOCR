@@ -32,6 +32,7 @@ class Worker(QThread):
     progress = Signal(int, int, str)
     result = Signal(object)
     error = Signal(str)
+    network = Signal(str)
 
     def __init__(self, folder: str, settings, check=False):
         super().__init__()
@@ -42,7 +43,7 @@ class Worker(QThread):
         try:
             settings = self.settings
             if self.check:
-                client = create_provider(settings, self.cancel)
+                client = create_provider(settings, self.cancel, on_network_event=self.network.emit)
                 try:
                     self.result.emit(client.doctor())
                 finally:
@@ -53,6 +54,7 @@ class Worker(QThread):
                         Path(self.folder),
                         settings,
                         cancel=self.cancel,
+                        on_network_event=self.network.emit,
                         progress=lambda a, b, c: self.progress.emit(a, b, c),
                     )
                 )
@@ -95,6 +97,10 @@ class Window(QMainWindow):
         if all(path.is_file() for path in EmbeddedSettings(precision="q8_0").paths()):
             self.precision.addItem("Q8_0", "q8_0")
         self.precision.setCurrentIndex(max(0, self.precision.findData(config.precision)))
+        self.device = QComboBox()
+        for label in ("Auto", "GPU", "CPU"):
+            self.device.addItem(label, label.lower())
+        self.device.setCurrentIndex(max(0, self.device.findData(config.embedded_device)))
         self.embedded_status = QLabel(
             "Проверить локальный комплект: кнопка «Проверить подключение»"
         )
@@ -107,6 +113,7 @@ class Window(QMainWindow):
         self.bar = QProgressBar()
         self.status = QPlainTextEdit()
         self.status.setReadOnly(True)
+        self.status.setMaximumBlockCount(3000)
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.addWidget(QLabel("Папка с изображениями"))
@@ -124,7 +131,11 @@ class Window(QMainWindow):
                 ("API-токен", self.token),
                 ("Тип API", self.api),
             ],
-            "embedded": [("Набор весов", self.precision), ("Статус", self.embedded_status)],
+            "embedded": [
+                ("Набор весов", self.precision),
+                ("Вычисления", self.device),
+                ("Статус", self.embedded_status),
+            ],
         }.items():
             widgets = []
             for title, widget in fields:
@@ -168,6 +179,7 @@ class Window(QMainWindow):
             api_token=self.token.text(),
             openwebui_api=self.api.currentData(),
             precision=self.precision.currentData(),
+            embedded_device=self.device.currentData(),
         )
 
     def controls(self):
@@ -184,6 +196,7 @@ class Window(QMainWindow):
             self.token,
             self.api,
             self.precision,
+            self.device,
         ]
 
     def choose(self):
@@ -200,6 +213,7 @@ class Window(QMainWindow):
             self.status.appendPlainText(f"Не удалось сохранить настройки: {error}")
         self.bar.setRange(0, 0)
         self.worker = Worker(self.folder.text(), self.current_config().settings(), check)
+        self.worker.network.connect(self.status.appendPlainText)
         self.worker.progress.connect(self.update_progress)
         self.worker.result.connect(self.completed)
         self.worker.error.connect(self.status.appendPlainText)

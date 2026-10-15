@@ -19,6 +19,7 @@ class AppConfig:
     api_token: str = ""
     openwebui_api: str = "proxy"
     precision: str = "f16"
+    embedded_device: str = "auto"
 
     def settings(self, timeout=300):
         from localocr.embedded import EmbeddedSettings
@@ -26,7 +27,9 @@ class AppConfig:
         from localocr.providers import OpenWebUISettings
 
         if self.provider == "embedded":
-            return EmbeddedSettings(precision=self.precision, timeout=timeout)
+            return EmbeddedSettings(
+                precision=self.precision, device_mode=self.embedded_device, timeout=timeout
+            )
         if self.provider == "openwebui":
             return OpenWebUISettings(
                 url=self.openwebui_url,

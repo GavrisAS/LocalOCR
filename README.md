@@ -91,3 +91,48 @@ EXIF orientation и небольшой наклон нормализуются. 
 Три режима, CLI flags, plain text config и offline-сборка Portable описаны в
 [EMBEDDED_OPENWEBUI.md](docs/EMBEDDED_OPENWEBUI.md). Lite не содержит модель.
 Portable F16 распространяется только после real Windows vision qualification.
+
+### Embedded: Auto / GPU / CPU
+
+Вычисления выбираются одним полем GUI или `--device auto|gpu|cpu` в CLI.
+Auto пробует CUDA → Vulkan → CPU, GPU пробует CUDA → Vulkan и запрещает CPU,
+CPU запускается с `--device none --n-gpu-layers 0 --no-mmproj-offload`.
+CUDA/Vulkan — внутренние backend, отдельных переключателей нет. Частичный или
+неподтверждённый offload не допускается: нужны все слои LLM и vision backend GPU.
+Статус показывает фактическое устройство, подтверждение offload и причину fallback.
+Старые настройки получают Auto; старый `embedded/engine` остаётся CPU-комплектом.
+`--device` для сетевого provider отклоняется; explicit flag перекрывает `--use-config`.
+
+Portable F16 содержит одну F16-пару и CPU engine в `embedded/engine`, CUDA и Vulkan
+в `embedded/engines/{cuda,vulkan}`. Все варианты закреплены на b11612; CUDA 12.4 DLL
+включены в архив. Toolkit/SDK, Python и интернет пользователю не нужны; нужен
+совместимый драйвер. GPU-capable candidate не означает Windows GPU qualification.
+Аппаратный Windows GPU прогон и чистая Windows VM проверяются отдельно.
+
+```console
+localocr doctor --provider embedded --precision f16 --device auto
+localocr doctor --provider embedded --precision f16 --device gpu
+localocr convert C:\Images --use-config --device cpu
+```
+
+### Почему не подключается OpenWebUI?
+
+В существующем GUI log сразу видны реальные запросы, ответы и технические причины.
+Для базы `https://host:8443/prefix` Proxy использует
+`GET https://host:8443/prefix/ollama/api/tags` и
+`POST https://host:8443/prefix/ollama/api/generate`; Chat —
+`GET https://host:8443/prefix/api/models` и
+`POST https://host:8443/prefix/api/chat/completions`.
+Не добавляйте endpoint к базовому URL: смотрите фактически отправленный путь.
+HTTP 401 означает отказ авторизации; 404 — ответ маршрута/endpoint; 502 — ответ
+сервера (возможная проблема upstream). `TLS_CERTIFICATE_VERIFY_FAILED` показывает
+ошибку цепочки сертификата, `DNS_ERROR` — ошибку разрешения имени с исходной причиной.
+TLS проверяется, redirects запрещены, `trust_env=False`: системные proxy переменные
+не используются. Это намеренная сетевая политика, не автоматический диагноз proxy.
+
+Лог можно выделить и скопировать; копия пишется в `localocr.log` рядом с config.json
+(Windows `%LOCALAPPDATA%\LocalOCR`, Linux `$XDG_CONFIG_HOME/LocalOCR` либо
+`~/.config/LocalOCR`). Токен остаётся в JSON, но скрывается в диагностике;
+изображения/base64 и успешный OCR-текст не логируются. CLI: `--debug-http`.
+HTTP API доступен и модель видна — ещё не доказательство успешного OCR; Chat явно
+сообщает о мягкой проверке, если model ID отсутствует в списке.

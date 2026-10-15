@@ -6,10 +6,13 @@ import socket
 import subprocess
 import sys
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Event, Lock
+from threading import Event, Lock, Thread
 
+from localocr.devices import candidates, failure_category, offload_evidence, parse_devices
+from localocr.network import emit
 from localocr.ollama import OCRServerError
 from localocr.providers import OpenWebUIChatProvider, OpenWebUISettings, chat_payload, chat_text
 
@@ -26,6 +29,7 @@ def portable_root() -> Path:
 @dataclass(frozen=True)
 class EmbeddedSettings:
     precision: str = "f16"
+    device_mode: str = "auto"
     engine: Path | None = None
     model_path: Path | None = None
     mmproj_path: Path | None = None
@@ -44,13 +48,15 @@ class EmbeddedSettings:
         )
 
     def validate(self):
+        if self.device_mode not in {"auto", "gpu", "cpu"}:
+            raise ValueError("Вычисления: auto, gpu или cpu")
         if self.precision not in {"f16", "q8_0"}:
             raise ValueError("Выберите f16 или q8_0")
         if not 1 <= self.timeout <= 7200 or not 1 <= self.startup_timeout <= 7200:
             raise ValueError("Недопустимый timeout Embedded")
         if not 256 <= self.num_predict <= 32768 or not 2048 <= self.ctx_size <= 131072:
             raise ValueError("Недопустимые параметры Embedded")
-        for path in self.paths():
+        for path in self.paths()[1:]:
             if not path.is_file() or path.stat().st_size == 0:
                 raise ValueError(f"Компонент Embedded не установлен: {path}")
 
@@ -64,6 +70,10 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
         self.process: subprocess.Popen | None = None
         self.owns_lock = False
         self.ready = False
+        self.runtime_status = ""
+        self.inference_seconds = []
+        self.diagnostics = deque(maxlen=2048)
+        self.reader = None
         self.lock_file = None
         self.cancel = cancel or Event()
         self.settings = OpenWebUISettings(
@@ -80,9 +90,107 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
             self.close()
         self.check_cancel()
         if self.ready:
+            self.check_cancel()
             if self.process is None or self.process.poll() is not None:
                 raise OCRServerError("Локальный engine завершился")
-            return f"Embedded {self.embedded.precision.upper()} · CPU · готов"
+            return self.runtime_status
+        failures = []
+        for candidate in candidates(self.embedded):
+            self.check_cancel()
+            try:
+                if not candidate.engine.is_file():
+                    raise ValueError(
+                        f"{candidate.backend}: runtime не установлен: {candidate.engine}"
+                    )
+                device, name = "none", "CPU"
+                if candidate.backend != "cpu":
+                    device, name = self.probe(candidate)
+                self.active_candidate = candidate
+                self.active_device = device
+                self.device_name = name
+                self.diagnostics.clear()
+                started = time.monotonic()
+                self._start()
+                if candidate.backend != "cpu":
+                    self.offload = offload_evidence(
+                        "\n".join(list(self.diagnostics)), candidate.backend
+                    )
+                else:
+                    self.offload = []
+                self.load_seconds = time.monotonic() - started
+                reason = "; ".join(failures)
+                self.runtime_status = (
+                    f"Embedded {self.embedded.precision.upper()} · {candidate.backend.upper()} · {name} · "
+                    + ("GPU offload: подтверждён (LLM + vision)" if self.offload else "выбран CPU")
+                    + (
+                        f" · {self.embedded.device_mode.upper()} fallback: {reason}"
+                        if reason
+                        else ""
+                    )
+                    + f" · model load={self.load_seconds:.3f}s"
+                )
+                emit(self, self.runtime_status)
+                return self.runtime_status
+            except (OSError, ValueError, OCRServerError) as error:
+                self.close()
+                detail = f"{candidate.backend.upper()} / {failure_category(str(error))}: {type(error).__name__}: {error}"
+                failures.append(detail)
+                emit(self, detail)
+        raise OCRServerError("Embedded: " + "; ".join(failures))
+
+    def probe(self, candidate):
+        # Bounded, cancellable discovery; no models, network or downloads.
+        self.process = subprocess.Popen(
+            [str(candidate.engine), "--offline", "--list-devices"],
+            cwd=candidate.engine.parent,
+            env={
+                key: value
+                for key, value in os.environ.items()
+                if not key.startswith(("LLAMA_", "HF_", "MTMD_", "GGML_"))
+            },
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        self.diagnostics.clear()
+        self.reader = Thread(target=self.drain, args=(self.process.stdout,), daemon=True)
+        self.reader.start()
+        deadline = time.monotonic() + 15
+        try:
+            while self.process.poll() is None:
+                self.check_cancel()
+                if time.monotonic() >= deadline:
+                    raise OCRServerError("GPU_PROBE_TIMEOUT")
+                self.cancel.wait(0.05)
+            self.reader.join(timeout=2)
+            output = "\n".join(list(self.diagnostics))
+            if self.process.returncode:
+                raise OCRServerError(
+                    f"GPU probe failed: exit={self.process.returncode} {output[:4096]}"
+                )
+            return parse_devices(output, candidate.backend)
+        finally:
+            self.close()
+
+    def drain(self, stream):
+        try:
+            for line in iter(lambda: stream.readline(2048), b""):
+                text = line.decode("utf-8", errors="replace").rstrip()
+                # Runtime output after readiness can contain OCR/prompt content.
+                # Keep only startup diagnostics, never completion text.
+                if not self.ready:
+                    self.diagnostics.append(text)
+        finally:
+            stream.close()
+
+    def _start(self):
+        if self.cancel.is_set():
+            self.close()
+        self.check_cancel()
+        if self.ready:
+            if self.process is None or self.process.poll() is not None:
+                raise OCRServerError("Локальный engine завершился")
+            return self.runtime_status
         if not _ENGINE_LOCK.acquire(blocking=False):
             raise OCRServerError("Другой Embedded engine уже выполняет задание")
         self.owns_lock = True
@@ -108,7 +216,9 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
                     fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError as error:
                 raise OCRServerError("Другой Embedded engine уже выполняет задание") from error
-            engine, model, mmproj = self.embedded.paths()
+            _, model, mmproj = self.embedded.paths()
+            engine = self.active_candidate.engine
+            gpu = self.active_candidate.backend != "cpu"
             # Avoid the default OS ephemeral client-port ranges: readiness probes
             # must not claim the server port before the child binds it.
             for _ in range(32):
@@ -128,7 +238,7 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
             env = {
                 key: value
                 for key, value in os.environ.items()
-                if not key.startswith(("LLAMA_", "HF_", "MTMD_"))
+                if not key.startswith(("LLAMA_", "HF_", "MTMD_", "GGML_"))
             }
             self.process = subprocess.Popen(
                 [
@@ -147,9 +257,13 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
                     "1",
                     "--flash-attn",
                     "off",
+                    "--device",
+                    self.active_device,
                     "--n-gpu-layers",
-                    "0",
-                    "--no-mmproj-offload",
+                    "all" if gpu else "0",
+                    "--mmproj-offload" if gpu else "--no-mmproj-offload",
+                    "--verbosity",
+                    "4",
                     "--offline",
                     "--alias",
                     self.settings.model,
@@ -159,19 +273,25 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
                 cwd=engine.parent,
                 env=env,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
+            self.reader = Thread(target=self.drain, args=(self.process.stdout,), daemon=True)
+            self.reader.start()
             deadline = time.monotonic() + self.embedded.startup_timeout
             while time.monotonic() < deadline:
                 self.check_cancel()
                 if self.process.poll() is not None:
-                    raise OCRServerError("Embedded engine не загрузил модель; проверьте комплект")
+                    raise OCRServerError(
+                        "Embedded engine не загрузил модель: "
+                        + "\n".join(list(self.diagnostics))[-8192:]
+                    )
                 original = self.settings
                 self.settings = replace(original, timeout=1, retries=0)
                 try:
                     # Health is public: authenticated models + unguessable alias prove ownership.
+                    self.suppress_network_events = True
                     data = self.request("GET", "/v1/models")
                     if any(
                         item.get("id") == original.model
@@ -179,10 +299,11 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
                         if isinstance(item, dict)
                     ):
                         self.ready = True
-                        return f"Embedded {self.embedded.precision.upper()} · CPU · готов"
+                        return self.runtime_status
                 except OCRServerError:
                     pass
                 finally:
+                    self.suppress_network_events = False
                     self.settings = original
                 self.cancel.wait(0.05)
             raise OCRServerError("Истекло время загрузки Embedded модели")
@@ -192,6 +313,7 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
 
     def recognize(self, image: bytes, *, single_table: bool = False) -> str:
         self.doctor()
+        started = time.monotonic()
         try:
             return chat_text(
                 self.request(
@@ -204,6 +326,10 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
         except BaseException:
             self.close()
             raise
+        finally:
+            seconds = time.monotonic() - started
+            self.inference_seconds.append(seconds)
+            emit(self, f"Embedded recognize latency={seconds:.3f}s")
 
     def close(self):
         try:
@@ -217,6 +343,9 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
                         process.kill()
                         process.wait(timeout=2)
         finally:
+            if self.reader is not None:
+                self.reader.join(timeout=2)
+                self.reader = None
             self.ready = False
             if self.lock_file is not None:
                 self.lock_file.close()

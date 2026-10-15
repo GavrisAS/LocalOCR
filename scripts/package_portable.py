@@ -63,6 +63,7 @@ def package(root: Path, output: Path, tag: str, sha: str, evidence: Path):
         "files": manifest["files"],
         "upstream": manifest["upstream"],
         "qualification": qualification,
+        "gpu_qualification": "GPU_HARDWARE_PENDING",
     }
     (output / "portable-manifest.json").write_text(
         json.dumps(descriptor, indent=2), encoding="utf-8"

@@ -18,3 +18,21 @@ GUI + CLI, frozen smoke, ZIP + SHA256, prerelease. Generated _build_version.py
 Исходный pyproject baseline 0.1 не меняется CI; frozen runtime использует reservation.
 При rerun published Release не переписывается. GitHub permissions contents:write
 должны быть доступны. Произвольная запись release tags третьей стороной запрещена.
+
+## Offline GPU candidate
+
+Portable uses the existing schema-1 streaming split/assembly flow (<1900 MiB parts),
+with an additive `gpu_qualification` field. Legacy assemblers still validate every
+engine/model size and SHA256. CPU engine remains in `embedded/engine`; CUDA 12.4
+engine + cudart/cuBLAS archive and Vulkan engine go into separate `engines` folders.
+All engines share b11612/10da8c4. F16 weights/projector are stored once. Lockfile
+records upstream URLs/digests/sizes; component manifest records every extracted
+DLL/EXE and notice. Retain MIT license and pinned NVIDIA EULA with the bundle.
+CUDA Toolkit/Vulkan SDK are build/runtime dependencies of neither Lite nor end user;
+compatible vendor drivers are required only for GPU. No runtime download/installer.
+
+A Windows CPU PASS can publish GPU-capable Portable as an explicitly unqualified
+GPU candidate (`GPU_HARDWARE_PENDING`); it must not say GPU VERIFIED. Linux hardware
+evidence is separate. Clean Windows VM, Windows GPU and internet-disconnected
+hardware evidence remain separate qualifications. Existing immutable reservation,
+Lite frozen checks, exact manifest and same-SHA rerun remain authoritative.

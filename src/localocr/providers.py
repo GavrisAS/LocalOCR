@@ -10,6 +10,8 @@ from localocr.ollama import OCRServerError, OllamaClient, Settings
 
 
 class OCRProvider(Protocol):
+    on_network_event: object
+
     def doctor(self) -> str: ...
     def recognize(self, image: bytes, *, single_table: bool = False) -> str: ...
     def check_cancel(self) -> None: ...
@@ -52,11 +54,11 @@ class OpenWebUISettings:
 
 
 class OllamaDirectProvider(OllamaClient):
-    pass
+    server_name = "Ollama Direct"
 
 
 class OpenWebUIOllamaProxyProvider(OllamaClient):
-    server_name = "OpenWebUI"
+    server_name = "OpenWebUI Proxy"
     settings: OpenWebUISettings
 
     def __init__(self, settings: OpenWebUISettings, cancel: Event | None = None):
@@ -79,6 +81,8 @@ class OpenWebUIOllamaProxyProvider(OllamaClient):
 
 
 class OpenWebUIChatProvider(OpenWebUIOllamaProxyProvider):
+    server_name = "OpenWebUI Chat"
+
     def request(self, method: str, endpoint: str, payload=None):
         return OllamaClient.request(self, method, endpoint, payload)
 
@@ -90,11 +94,22 @@ class OpenWebUIChatProvider(OpenWebUIOllamaProxyProvider):
         data = self.request("GET", "/api/models")
         models = data.get("data", data.get("models"))
         if not isinstance(models, list):
-            raise OCRServerError("Некорректный список моделей OpenWebUI")
+            raise OCRServerError("MALFORMED_API_RESPONSE: Некорректный список моделей OpenWebUI")
         # Visibility of the list may be restricted: recognize remains authoritative.
         visible = any(
             isinstance(item, dict) and item.get("id", item.get("name")) == self.settings.model
             for item in models
+        )
+        from localocr.network import emit
+
+        emit(
+            self,
+            f"doctor: HTTP API доступен · model={self.settings.model} · "
+            + (
+                "модель видна; OCR ещё не выполнялся"
+                if visible
+                else "MODEL_NOT_VISIBLE; мягкая проверка, доступ OCR не подтверждён"
+            ),
         )
         suffix = "" if visible else " · model ID не виден в списке; проверьте при OCR"
         return f"Подключено · {self.settings.model}{suffix}"
@@ -154,7 +169,25 @@ def chat_text(data, *, single_table=False) -> str:
         raise OCRServerError("Некорректный Chat Completions OCR-ответ") from error
 
 
-def create_provider(settings, cancel: Event | None = None) -> OCRProvider:
+def create_provider(settings, cancel: Event | None = None, on_network_event=None) -> OCRProvider:
+    from localocr.network import emit, exception_detail
+
+    try:
+        client = _create_provider(settings, cancel)
+    except (ValueError, OCRServerError) as error:
+        if on_network_event:
+            from types import SimpleNamespace
+
+            emit(
+                SimpleNamespace(settings=settings, on_network_event=on_network_event),
+                f"Configuration / URL validation · input={getattr(settings, 'url', 'Embedded')} · {exception_detail(error)}",
+            )
+        raise
+    client.on_network_event = on_network_event
+    return client
+
+
+def _create_provider(settings, cancel: Event | None = None):
     from localocr.embedded import EmbeddedOCRProvider, EmbeddedSettings
 
     if isinstance(settings, EmbeddedSettings):

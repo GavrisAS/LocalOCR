@@ -12,6 +12,7 @@ try {
     New-Item -ItemType Directory -Path $temporary | Out-Null
     Copy-Item -Path $Root -Destination $relocated -Recurse
     $programs = @((Join-Path $relocated 'LocalOCR-CLI/LocalOCR-CLI.exe'), (Join-Path $relocated 'embedded/engine/llama-server.exe'))
+    $programs += @(Get-ChildItem (Join-Path $relocated 'embedded/engines') -Filter llama-server.exe -Recurse -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
     for ($index = 0; $index -lt $programs.Count; $index++) {
         # Scope isolation to the relocated application and engine, preserving runner control.
         New-NetFirewallRule -DisplayName "$rule-$index-v4" -Program $programs[$index] -Direction Outbound -Action Block -Profile Any -RemoteAddress '1.0.0.0-126.255.255.255','128.0.0.0-255.255.255.254' | Out-Null

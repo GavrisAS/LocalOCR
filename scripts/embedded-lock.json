@@ -45,5 +45,49 @@
         "size": 484403648
       }
     }
+  },
+  "engines": {
+    "cpu": [
+      {
+        "tag": "b11612",
+        "commit": "10da8c463f735c7eaff904c6474e6cf38dccbe83",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11612/llama-b11612-bin-win-cpu-x64.zip",
+        "sha256": "b8456ccb1be98365a5a2227efa5c495508a6a3ebce881c6189a1dbeaaa170b69",
+        "size": 19553433
+      }
+    ],
+    "cuda": [
+      {
+        "tag": "b11612",
+        "commit": "10da8c463f735c7eaff904c6474e6cf38dccbe83",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11612/llama-b11612-bin-win-cuda-12.4-x64.zip",
+        "size": 265262750,
+        "sha256": "4c6d8afd23475f6eded74c4a3019a6746aab83183a3158f3fc4de1cb7c4f5f12"
+      },
+      {
+        "tag": "b11612",
+        "commit": "10da8c463f735c7eaff904c6474e6cf38dccbe83",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11612/cudart-llama-bin-win-cuda-12.4-x64.zip",
+        "size": 391443627,
+        "sha256": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6"
+      }
+    ],
+    "vulkan": [
+      {
+        "tag": "b11612",
+        "commit": "10da8c463f735c7eaff904c6474e6cf38dccbe83",
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11612/llama-b11612-bin-win-vulkan-x64.zip",
+        "size": 32171493,
+        "sha256": "e62f0674970a70b007fa3c425d191ceacabbf02406d6c9ac8b6f27cd23abe9e9"
+      }
+    ]
+  },
+  "gpu_qualification": "GPU_HARDWARE_PENDING",
+  "notices": {
+    "CUDA-EULA.html": {
+      "url": "https://docs.nvidia.com/cuda/archive/12.4.0/eula/index.html",
+      "size": 82548,
+      "sha256": "182734e0cee7c6217b911ef88fc92c4a1f487d1003c24dd9dab1597a399fb7c5"
+    }
   }
 }

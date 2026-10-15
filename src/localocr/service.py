@@ -239,6 +239,7 @@ def convert(
     diagnostics=False,
     cancel: Event | None = None,
     progress: Progress | None = None,
+    on_network_event=None,
 ) -> list[JobResult]:
     paths = discover(source, recursive)
     output_dir = output_dir or ((source if source.is_dir() else source.parent) / "results")
@@ -247,7 +248,11 @@ def convert(
     if not paths:
         raise ValueError("Поддерживаемые изображения не найдены")
     cancel = cancel or Event()
-    client = create_provider(settings, cancel)
+    client = (
+        create_provider(settings, cancel, on_network_event=on_network_event)
+        if on_network_event
+        else create_provider(settings, cancel)
+    )
     try:
         client.doctor()
         output_dir.mkdir(parents=True, exist_ok=True)

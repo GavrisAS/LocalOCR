@@ -1,0 +1,22 @@
+LocalOCR embedded third-party components
+
+llama.cpp / ggml: Copyright (c) 2023-2026 The ggml authors, MIT license.
+Pinned source: https://github.com/ggml-org/llama.cpp/tree/10da8c463f735c7eaff904c6474e6cf38dccbe83
+The upstream archive license files are retained beside each engine.
+
+CUDA runtime and cuBLAS: Copyright NVIDIA Corporation. All rights reserved.
+Redistributed unmodified from the pinned upstream cudart archive; use subject to
+NVIDIA CUDA Toolkit End User License Agreement (redistributable components):
+https://docs.nvidia.com/cuda/archive/12.4.0/eula/index.html
+No CUDA Toolkit installation is required. A compatible NVIDIA driver is required.
+
+Vulkan loader/backend: upstream license/notice files retained from the official
+llama.cpp Windows Vulkan archive. GPU drivers are supplied by the user/system.
+
+Microsoft Visual C++ runtime: Copyright Microsoft Corporation. All rights reserved.
+Redistributed runtime files collected from the PySide6 frozen distribution.
+See the distribution's PySide6/Qt third-party notices and Microsoft runtime terms.
+
+Model provenance and exact hashes are in embedded/manifest.json (upstream.models).
+GLM-OCR model license: https://huggingface.co/zai-org/GLM-OCR (model card metadata: MIT)
+https://github.com/zai-org/GLM-OCR (source: Apache-2.0; full text included)

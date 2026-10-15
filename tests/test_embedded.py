@@ -57,7 +57,13 @@ def fake_engine(tmp_path, monkeypatch):
 
     monkeypatch.setattr(subprocess, "Popen", launch)
     return (
-        EmbeddedSettings(engine=engine, model_path=model, mmproj_path=mmproj, startup_timeout=2),
+        EmbeddedSettings(
+            engine=engine,
+            model_path=model,
+            mmproj_path=mmproj,
+            startup_timeout=2,
+            device_mode="cpu",
+        ),
         script,
         launches,
     )

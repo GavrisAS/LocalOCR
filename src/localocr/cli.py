@@ -42,11 +42,16 @@ def selected_settings(
     mmproj_path,
     use_config,
     timeout=300,
+    device=None,
 ):
     from localocr.config import AppConfig
 
     config = load_config() if use_config else AppConfig()
     config.provider = provider or config.provider
+    if device is not None and (
+        device not in {"auto", "gpu", "cpu"} or config.provider != "embedded"
+    ):
+        raise ValueError("--device auto|gpu|cpu применяется только к Embedded")
     if config.provider == "ollama":
         config.ollama_url = url or ollama_url or config.ollama_url
         config.ollama_model = model or config.ollama_model
@@ -58,6 +63,7 @@ def selected_settings(
     elif config.provider == "embedded":
         return EmbeddedSettings(
             precision=precision or config.precision,
+            device_mode=device or config.embedded_device,
             engine=engine,
             model_path=model_path,
             mmproj_path=mmproj_path,
@@ -79,7 +85,10 @@ def doctor(
     model_path: Path | None = None,
     mmproj_path: Path | None = None,
     use_config: bool = False,
+    device: str | None = None,
+    debug_http: bool = False,
 ):
+    setup_logging()
     client = None
     try:
         settings = selected_settings(
@@ -94,8 +103,9 @@ def doctor(
             model_path,
             mmproj_path,
             use_config,
+            device=device,
         )
-        client = create_provider(settings)
+        client = create_provider(settings, on_network_event=typer.echo if debug_http else None)
         typer.echo(client.doctor())
     except (ValueError, OSError) as error:
         typer.echo(str(error), err=True)
@@ -124,6 +134,8 @@ def convert(
     model_path: Path | None = None,
     mmproj_path: Path | None = None,
     use_config: bool = False,
+    device: str | None = None,
+    debug_http: bool = False,
     output_dir: Path | None = None,
     recursive: bool = False,
     overwrite: bool = False,
@@ -147,11 +159,13 @@ def convert(
                 mmproj_path,
                 use_config,
                 timeout,
+                device=device,
             ),
             output_dir,
             recursive,
             overwrite,
             diagnostics,
+            on_network_event=typer.echo if debug_http else None,
             progress=lambda done, total, message: typer.echo(f"[{done}/{total}] {message}"),
         )
         typer.echo(f"Обнаружено файлов: {len(results)}")

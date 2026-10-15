@@ -15,3 +15,26 @@ frozen CLI через HTTP mock с XLSX roundtrip. Успех PyInstaller нед
 
 Результаты реальных запусков и ограничения фиксируются отдельно в AUDIT.md.
 Не считать mock evidence доказательством качества реальной модели.
+
+## GPU and HTTP diagnostics qualification
+
+Run `uv sync --locked`, `make check`, `QT_QPA_PLATFORM=offscreen uv run pytest`.
+Device/network tests exercise candidate order, strict GPU failure, CPU flags,
+software devices, incomplete proof, migrated settings and CLI semantics, real Qt
+worker delivery on doctor and batch preflight errors, HTTP statuses and redirects,
+actual prefixed URLs, POST payload model IDs, TLS/DNS/socket causes, typed timeouts,
+bounded bodies and image omission. Existing fidelity/cancellation tests remain.
+
+Hardware qualification (explicit build/dev command; never downloads):
+
+```console
+uv run python scripts/qualify_gpu.py --engine embedded/engines/cuda/llama-server.exe --model embedded/models/f16/model.gguf --mmproj embedded/models/f16/mmproj.gguf --output .evidence/gpu/report.json
+```
+
+This runs the same pinned F16 pair on CPU/GPU/Auto, synthetic 3×3 and 30×3 through
+the shared canonical validator and XLSX writer, checks source comments, shape and
+cell types, and records actual backend/device/offload, engine/model hashes, cold
+model load and inference latency separately. It fails on synthetic gold mismatch.
+RTX A4000 is the target; Linux evidence does not qualify Windows CUDA/Vulkan.
+Windows CPU frozen qualification and reassembled Portable checks stay mandatory.
+No software test or packaged DLL permits declaring GPU hardware PASS.

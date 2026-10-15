@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import shutil
+import subprocess
 import tempfile
 import urllib.request
 import zipfile
@@ -60,26 +61,62 @@ def prepare(root: Path, precision: str):
     root.mkdir(parents=True, exist_ok=True)
     for kind, item in lock["models"][precision].items():
         download(item, root / "models" / precision / (kind + ".gguf"))
-    with tempfile.TemporaryDirectory() as temporary:
-        archive = Path(temporary) / "engine.zip"
-        download(lock["engine"], archive)
-        with zipfile.ZipFile(archive) as bundle:
-            # Keep the complete standalone DLL set, flatten the official bin directory.
-            for info in bundle.infolist():
-                if info.is_dir():
-                    continue
-                name = Path(info.filename).name
-                if name.endswith((".exe", ".dll")) or "LICENSE" in name.upper():
-                    target = root / "engine" / name
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    if target.exists():
-                        raise ValueError("Duplicate engine member")
-                    with bundle.open(info) as source, target.open("wb") as out:
-                        shutil.copyfileobj(source, out, 1024 * 1024)
+    collect = lock.get("engines", {"cpu": [lock["engine"]]})
+    for backend, archives in collect.items():
+        destination = root / "engine" if backend == "cpu" else root / "engines" / backend
+        destination.mkdir(parents=True, exist_ok=True)
+        for item in archives:
+            with tempfile.TemporaryDirectory() as temporary:
+                archive = Path(temporary) / "engine.zip"
+                download(item, archive)
+                with zipfile.ZipFile(archive) as bundle:
+                    for info in bundle.infolist():
+                        if info.is_dir():
+                            continue
+                        name = Path(info.filename).name
+                        if name.endswith((".exe", ".dll")) or any(
+                            word in name.upper()
+                            for word in ("LICENSE", "NOTICE", "COPYING", "EULA")
+                        ):
+                            target = destination / name
+                            with bundle.open(info) as source, target.open("wb") as out:
+                                shutil.copyfileobj(source, out, 1024 * 1024)
     collect_runtime_dlls(root)
+    for backend in ("cuda", "vulkan"):
+        for dll in (root / "engine").glob("*.dll", case_sensitive=False):
+            if dll.name.lower().startswith(("msvcp140", "vcruntime140", "concrt140")):
+                shutil.copyfile(dll, root / "engines" / backend / dll.name)
+    notices = Path(__file__).with_name("embedded-notices.txt")
+    shutil.copyfile(notices, root / "THIRD_PARTY_NOTICES.txt")
+    shutil.copyfile(Path(__file__).with_name("llama-LICENSE.txt"), root / "llama-LICENSE.txt")
+    shutil.copyfile(
+        Path(__file__).with_name("GLM-OCR-LICENSE.txt"), root / "GLM-OCR-source-LICENSE.txt"
+    )
+    for name, item in lock.get("notices", {}).items():
+        download(item, root / "licenses" / name)
+    help_result = subprocess.run(
+        [str((root / "engine/llama-server.exe").resolve()), "--help"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+    )
+    help_text = help_result.stdout + help_result.stderr
+    if help_result.returncode or not all(
+        flag in help_text
+        for flag in (
+            "--device",
+            "--list-devices",
+            "--n-gpu-layers",
+            "--no-mmproj-offload",
+            "--offline",
+        )
+    ):
+        raise ValueError("Pinned Windows engine help/capabilities check failed")
     files = {}
     for path in sorted(root.rglob("*")):
-        if path.is_file():
+        if path.is_file() and path != root / "manifest.json":
             files[path.relative_to(root).as_posix()] = {
                 "size": path.stat().st_size,
                 "sha256": digest(path),

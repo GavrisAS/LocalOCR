@@ -19,3 +19,15 @@ Lite contains no model. Portable F16 is included only after real Windows CPU
 vision qualification; when included, assemble all split assets locally with the
 supplied PowerShell script to run on a disconnected PC. No runtime downloads.
 OpenWebUI live connection and historical human OCR gold remain PENDING.
+
+Embedded GPU candidate: exactly Auto/GPU/CPU, automatic CUDA → Vulkan selection,
+confirmed full language + vision offload required; strict GPU never falls back to
+CPU. Portable includes pinned CUDA 12.4 runtime DLLs and Vulkan engine alongside
+CPU and the single F16 model pair. Linux RTX A4000 synthetic XLSX qualification
+passed; Windows GPU hardware remains GPU_HARDWARE_PENDING. See workflow evidence
+for the exact Windows CPU/assembled bundle result. No Windows GPU VERIFIED claim.
+
+GUI connection/OCR log now reports actual HTTP requests, response fragments/status,
+TLS/DNS/socket causes and timeout stages, with token and image omission. System
+proxy remains disabled (trust_env=False), redirects disabled, TLS verified. Live
+user OpenWebUI connection remains PENDING without its configured server credentials.
