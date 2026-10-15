@@ -129,7 +129,7 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
                 self.load_seconds = time.monotonic() - started
                 reason = "; ".join(failures)
                 self.runtime_status = (
-                    f"Embedded {self.embedded.precision.upper()} · режим={self.embedded.device_mode.upper()} · {candidate.backend.upper()} · {name} · "
+                    f"Embedded {self.embedded.precision.upper()} · {candidate.backend.upper()} · {name} · режим={self.embedded.device_mode.upper()} · "
                     + ("GPU offload: подтверждён (LLM + vision)" if self.offload else "выбран CPU")
                     + (
                         f" · {self.embedded.device_mode.upper()} fallback: {reason}"

@@ -179,6 +179,8 @@ def test_gui_runtime_status_main_thread(fake_engine, tmp_path, monkeypatch, batc
     assert threads and all(thread == app.thread() for thread in threads)
     assert "режим=CPU" in window.embedded_status.text()
     assert "выбран CPU" in window.embedded_status.text()
+    # Frozen qualification consumes this stable prefix.
+    assert window.embedded_status.text().startswith("Embedded F16 · CPU ·")
     fake_engine[0].paths()[0].unlink()
     window.launch(True)
     deadline = time.monotonic() + 4
