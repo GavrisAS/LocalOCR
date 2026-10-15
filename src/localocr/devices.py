@@ -104,3 +104,15 @@ def failure_category(detail: str) -> str:
     if "физическое gpu не найдено" in text:
         return "GPU_NOT_FOUND"
     return "ENGINE_START_FAILED"
+
+
+def native_gpu_failure(line: str) -> bool:
+    """Only native GPU diagnostic prefixes, never general completion output."""
+    native = re.search(
+        r"^\s*(?:\d[\d:.]*\s+[A-Z]\s+)?(?:CUDA error:|Vulkan error:|ggml_cuda[\w:]*|ggml_backend_cuda[\w:]*|ggml_vulkan[\w:]*|ggml_backend_vk[\w:]*)",
+        line,
+        re.IGNORECASE,
+    )
+    return bool(native) and (
+        "error" in line.lower() or failure_category(line) != "ENGINE_START_FAILED"
+    )

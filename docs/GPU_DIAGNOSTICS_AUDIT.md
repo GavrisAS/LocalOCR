@@ -2,7 +2,8 @@
 
 Source base: v0.13 / 9939875118e9d02f438a80a3cbf8b7fc53fdc275.
 Initial implementation reserved v0.14. A required final exception-redaction fix
-uses a second main push and v0.15; v0.14 remains immutable.
+uses v0.15. The post-ready native GPU error audit required v0.16; earlier tags
+remain immutable.
 Final exact commit, tag, CI/release results and artifact hashes belong to the local
 handoff evidence produced after the push, not to a version bump commit.
 
@@ -45,3 +46,9 @@ user documents/images/OCR outputs; only synthetic machine reports/logs are inclu
 Final error strings and unexpected Qt worker exceptions also redact the configured
 token; original exception chains remain available in memory and are redacted when
 formatted into diagnostics. URL validation events explicitly carry URL_INVALID.
+
+The post-ready OOM regression uses a fake engine that successfully loads then emits
+a native CUDA OOM and exits. Strict GPU preserves GPU_OOM and never starts CPU;
+ordinary completion text is discarded. This test is not hardware qualification.
+Windows frozen qualification now records model startup, each OCR request latency
+and full pipeline time separately from its actual --debug-http CLI trace.

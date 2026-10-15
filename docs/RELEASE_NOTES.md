@@ -35,3 +35,7 @@ user OpenWebUI connection remains PENDING without its configured server credenti
 Final diagnostics correction: configured tokens are omitted from final exception
 strings and Qt worker errors as well as transport events. Original technical causes
 remain chained. Invalid-URL constructor errors explicitly report URL_INVALID.
+
+Native GPU OOM/device errors occurring after readiness are preserved as technical
+causes of failed inference; ordinary OCR output is discarded. Windows qualification
+records actual model-startup and per-request inference timing separately.

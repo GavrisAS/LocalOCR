@@ -30,7 +30,9 @@ once. Strict GPU disallows partial/unconfirmed offload and CPU. Auto reports the
 actual failure chain before CPU. CPU disables both language and projector offload.
 The pinned b11612 help supports `none`, `all`, and projector offload flags.
 A bounded drained pipe captures startup technical output at verbosity 4; completion
-output is discarded after readiness. No raw engine output is persisted by default.
+output is discarded after readiness. Only narrowly prefixed native GPU fatal/OOM
+lines are retained for a failed inference; they cannot be confused with a generic
+completion line. No raw engine output is persisted by default.
 
 `network.py` supplies Qt-independent callbacks and exception classification. The
 common HTTP transport builds one httpx Request, logs its actual method/URL, then

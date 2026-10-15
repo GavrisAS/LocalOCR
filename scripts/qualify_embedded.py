@@ -4,10 +4,12 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -98,6 +100,7 @@ def qualify(root: Path, output: Path, sha: str, isolated: bool, relocated=False)
             for rows in [3, 30]:
                 image = Path(directory) / f"synthetic-{rows}.png"
                 expected = synthetic(image, rows)
+                started = time.monotonic()
                 result = subprocess.run(
                     [
                         str(exe),
@@ -111,6 +114,7 @@ def qualify(root: Path, output: Path, sha: str, isolated: bool, relocated=False)
                         "600",
                         "--device",
                         "cpu",
+                        "--debug-http",
                     ],
                     text=True,
                     encoding="utf-8",
@@ -118,6 +122,7 @@ def qualify(root: Path, output: Path, sha: str, isolated: bool, relocated=False)
                     timeout=1800,
                     env=isolated_environment(),
                 )
+                pipeline_seconds = time.monotonic() - started
                 xlsx = image.parent / "results" / (image.stem + ".xlsx")
                 if result.returncode not in {0, 1} or not xlsx.is_file():
                     raise ValueError(
@@ -147,6 +152,22 @@ def qualify(root: Path, output: Path, sha: str, isolated: bool, relocated=False)
                 evidence["cases"].append(
                     {
                         "rows": rows,
+                        "requested_mode": "cpu",
+                        "actual_backend": re.findall(
+                            r"Embedded F16 · (CPU|CUDA|VULKAN) ·", result.stdout
+                        ),
+                        "pipeline_seconds": pipeline_seconds,
+                        "startup_seconds": [
+                            float(value)
+                            for value in re.findall(r"model load=([0-9.]+)s", result.stdout)
+                        ],
+                        "ocr_request_seconds": [
+                            float(value)
+                            for value in re.findall(
+                                r"Embedded recognize latency=([0-9.]+)s", result.stdout
+                            )
+                        ],
+                        "technical_trace": result.stdout[-20000:],
                         "shape": shape,
                         "text_mismatches": mismatches,
                         "values_match": values == expected_values,

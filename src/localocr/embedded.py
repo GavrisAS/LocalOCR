@@ -11,7 +11,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, Lock, Thread
 
-from localocr.devices import candidates, failure_category, offload_evidence, parse_devices
+from localocr.devices import (
+    candidates,
+    failure_category,
+    native_gpu_failure,
+    offload_evidence,
+    parse_devices,
+)
 from localocr.network import emit
 from localocr.ollama import OCRServerError
 from localocr.providers import OpenWebUIChatProvider, OpenWebUISettings, chat_payload, chat_text
@@ -73,6 +79,7 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
         self.runtime_status = ""
         self.inference_seconds = []
         self.diagnostics = deque(maxlen=2048)
+        self.runtime_errors = deque(maxlen=32)
         self.reader = None
         self.lock_file = None
         self.cancel = cancel or Event()
@@ -92,7 +99,8 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
         if self.ready:
             self.check_cancel()
             if self.process is None or self.process.poll() is not None:
-                raise OCRServerError("Локальный engine завершился")
+                self.close()
+                raise OCRServerError(self.runtime_failure("Локальный engine завершился"))
             return self.runtime_status
         failures = []
         for candidate in candidates(self.embedded):
@@ -109,6 +117,7 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
                 self.active_device = device
                 self.device_name = name
                 self.diagnostics.clear()
+                self.runtime_errors.clear()
                 started = time.monotonic()
                 self._start()
                 if candidate.backend != "cpu":
@@ -180,6 +189,8 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
                 # Keep only startup diagnostics, never completion text.
                 if not self.ready:
                     self.diagnostics.append(text)
+                elif native_gpu_failure(text):
+                    self.runtime_errors.append(text)
         finally:
             stream.close()
 
@@ -311,6 +322,13 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
             self.close()
             raise
 
+    def runtime_failure(self, default: str) -> str:
+        lines = "\n".join(list(self.runtime_errors))
+        category = failure_category(lines)
+        if category == "ENGINE_START_FAILED":
+            category = "GPU_RUNTIME_ERROR"
+        return f"{category} · {lines}" if lines else default
+
     def recognize(self, image: bytes, *, single_table: bool = False) -> str:
         self.doctor()
         started = time.monotonic()
@@ -323,8 +341,10 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
                 ),
                 single_table=single_table,
             )
-        except BaseException:
+        except BaseException as error:
             self.close()
+            if isinstance(error, OCRServerError) and self.runtime_errors:
+                raise OCRServerError(self.runtime_failure(str(error))) from error
             raise
         finally:
             seconds = time.monotonic() - started

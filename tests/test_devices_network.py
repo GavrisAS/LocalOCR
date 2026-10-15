@@ -347,3 +347,60 @@ def test_worker_final_error_redacts_unexpected_exception(monkeypatch):
     worker.error.connect(errors.append)
     worker.run()
     assert errors == ["unexpected echoes TOKEN_OMITTED"]
+
+
+def test_native_gpu_oom_after_ready_keeps_technical_cause(fake_engine, monkeypatch):  # noqa: F811
+    from test_embedded import FAKE
+
+    settings, script, launches = fake_engine
+    proof = "print('offloaded 18/18 layers to GPU', flush=True)\nprint('clip_ctx: CLIP using CUDA0 backend', flush=True)\nprint('reserve_compute_meta: CUDA0 compute buffer size = 100 MiB', flush=True)\n"
+    body = FAKE.replace("server=HTTPServer", proof + "server=HTTPServer").replace(
+        "  self.rfile.read(int(self.headers['Content-Length']))",
+        "  print('OCR_PRIVATE_CONTENT_NOT_FOR_LOG', flush=True)\n  print('CUDA error: out of memory', flush=True)\n  raise SystemExit(1)\n  self.rfile.read(int(self.headers['Content-Length']))",
+    )
+    script.write_text("MODE='ready'\n" + body)
+    monkeypatch.setattr(EmbeddedOCRProvider, "probe", lambda *args: ("CUDA0", "GPU fixture"))
+    with EmbeddedOCRProvider(replace(settings, device_mode="gpu")) as client:
+        assert "подтверждён" in client.doctor()
+        with pytest.raises(OCRServerError, match="GPU_OOM"):
+            client.recognize(b"image")
+        assert client.process is None and not client.owns_lock
+        assert "OCR_PRIVATE_CONTENT_NOT_FOR_LOG" not in "\n".join(
+            [*client.diagnostics, *client.runtime_errors]
+        )
+    assert len(launches) == 1
+
+
+@pytest.mark.parametrize(
+    "line,expected",
+    [
+        ("CUDA error: out of memory", True),
+        ("ggml_cuda_compute_forward: CUDA error 700 illegal memory access", True),
+        ("ggml_backend_vk: error: device lost", True),
+        ("slot: OCR_PRIVATE_CONTENT out of memory", False),
+        ("recognized table CUDA error: out of memory", False),
+        ("clip_ctx: CLIP using CUDA0 backend", False),
+    ],
+)
+def test_native_gpu_error_filter(line, expected):
+    from localocr.devices import native_gpu_failure
+
+    assert native_gpu_failure(line) is expected
+
+
+def test_request_construction_failure_emits_original_url(monkeypatch):
+    lines = []
+
+    def invalid(*args, **kwargs):
+        raise httpx.InvalidURL("Invalid non-printable ASCII character in URL")
+
+    monkeypatch.setattr(httpx.AsyncClient, "build_request", invalid)
+    client = create_provider(
+        OpenWebUISettings(url="https://host.example:8443/prefix"), on_network_event=lines.append
+    )
+    with pytest.raises(ValueError, match="URL_INVALID"):
+        client.doctor()
+    text = "\n".join(lines)
+    assert "input=https://host.example:8443/prefix" in text
+    assert "httpx.InvalidURL" in text and "Request build" in text
+    assert "HTTP →" not in text

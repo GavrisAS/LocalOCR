@@ -38,7 +38,9 @@ Portable публикуется только если конкретный Windo
 реальное vision inference на синтетических 3×3 и 30×3 таблицах, включая XLSX,
 проверку source text каждого anchor и перенос полного bundle в другой каталог.
 Квалификация runner выполняется с firewall, запрещающим внешние подключения.
-GPU пока не квалифицирован; используется CPU, без PyTorch и без требования NVIDIA.
+Windows GPU hardware остаётся PENDING; qualification на Windows runner выполняется
+в CPU. Runtime использует Auto/GPU/CPU, как описано ниже. CPU работает без PyTorch
+и без требования NVIDIA; Linux RTX A4000/CUDA квалифицирован отдельно.
 Q8_0 явно выбирается и закреплён отдельно, Portable Q8_0 пока не публикуется.
 
 Если release содержит Portable: на машине с доступом к GitHub скачайте все

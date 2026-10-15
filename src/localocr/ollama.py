@@ -132,13 +132,26 @@ class OllamaClient:
                 status_seen = None
                 try:
                     async with asyncio.timeout(max(0.01, deadline - time.monotonic())):
-                        request = client.build_request(
-                            method,
-                            base + endpoint,
-                            json=payload,
-                            headers=headers,
-                            extensions=extensions,
-                        )
+                        try:
+                            request = client.build_request(
+                                method,
+                                base + endpoint,
+                                json=payload,
+                                headers=headers,
+                                extensions=extensions,
+                            )
+                        except (httpx.InvalidURL, UnicodeError, ValueError) as error:
+                            label = (
+                                "URL_INVALID"
+                                if isinstance(error, httpx.InvalidURL)
+                                else "REQUEST_BUILD_ERROR"
+                            )
+                            detail = redact(
+                                self.settings,
+                                f"{label} · Request build / URL validation · input={self.settings.url} · {exception_detail(error)}",
+                            )
+                            emit(self, detail)
+                            raise ValueError(detail) from error
                         operation = "doctor" if method == "GET" else "recognize"
                         emit(
                             self,
