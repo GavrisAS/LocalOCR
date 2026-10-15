@@ -44,3 +44,9 @@ GPU discovery preserves original --list-devices diagnostics even when the comman
 exits zero with no usable device: driver mismatch, failed backend DLL loading and
 software renderers remain observable. Startup timeouts include bounded technical
 engine output. No GPU claim follows from a successful probe exit code alone.
+
+Windows F16 qualification exercises the shared engine across both synthetic inputs
+in one frozen batch, recording one model startup and per-image/per-request latency.
+One bounded build-time retry is permitted only for a startup deadline, retaining
+first-attempt evidence; synthetic gold failures are not retried. Runtime OCR retry
+semantics and the F16 pair are unchanged.

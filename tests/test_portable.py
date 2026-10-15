@@ -146,3 +146,74 @@ def test_renamed_numpy_runtime_does_not_satisfy_engine(tmp_path):
     (numpy / "msvcp140-renamed.dll").write_bytes(b"fixture")
     with pytest.raises(ValueError, match=r"C\+\+ runtime"):
         prepare.collect_runtime_dlls(root)
+
+
+BATCH_TRACE = """[00:00:00] Embedded F16 · CPU · CPU · выбран CPU · model load=1.500s
+[0/2] small.png
+[00:00:01] Embedded recognize latency=2.000s
+[1/2] small.png: SUCCESS
+[1/2] large.png
+[00:00:03] Embedded recognize latency=3.000s
+[00:00:06] Embedded recognize latency=4.000s
+[2/2] large.png: SUCCESS
+"""
+
+
+def test_frozen_batch_timings_separate_startup_and_each_image(monkeypatch):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    module = load("qualify_embedded")
+    result = module.frozen_batch_metadata(BATCH_TRACE, ["small.png", "large.png"])
+    assert result["shared_engine"] and result["startup_seconds"] == 1.5
+    assert result["cases"]["small.png"]["ocr_request_seconds"] == [2.0]
+    assert result["cases"]["large.png"]["ocr_request_seconds"] == [3.0, 4.0]
+
+
+@pytest.mark.parametrize(
+    "trace",
+    [
+        BATCH_TRACE + "Embedded F16 · CPU · CPU · model load=2.000s\n",
+        BATCH_TRACE.replace("Embedded recognize latency=2.000s", "no latency"),
+        BATCH_TRACE.replace("small.png: SUCCESS", "other.png: SUCCESS"),
+    ],
+)
+def test_frozen_batch_rejects_restart_or_missing_evidence(monkeypatch, trace):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    with pytest.raises(ValueError):
+        load("qualify_embedded").frozen_batch_metadata(trace, ["small.png", "large.png"])
+
+
+@pytest.mark.parametrize(
+    "error,always_fail,expected_calls",
+    [
+        ("ENGINE_STARTUP_TIMEOUT: observed deadline", False, 2),
+        ("ENGINE_STARTUP_TIMEOUT: observed deadline", True, 2),
+        ("Synthetic gold differs", True, 1),
+    ],
+)
+def test_qualification_retry_is_bounded_and_retains_failure(
+    tmp_path, monkeypatch, error, always_fail, expected_calls
+):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    module = load("qualify_embedded")
+    output = tmp_path / "qualification.json"
+    calls = []
+
+    def attempt(*args):
+        calls.append(args)
+        if len(calls) == 1 or always_fail:
+            output.write_text(json.dumps({"status": "FAIL", "error": error}))
+            raise ValueError(error)
+        output.write_text(json.dumps({"status": "PASS", "cases": [3, 30]}))
+
+    monkeypatch.setattr(module, "qualify_once", attempt)
+    if always_fail:
+        with pytest.raises(ValueError, match=error.split(":")[0]):
+            module.qualify(tmp_path, output, "sha", True)
+    else:
+        module.qualify(tmp_path, output, "sha", True)
+    report = json.loads(output.read_text())
+    assert len(calls) == expected_calls and report["qualification_attempts"] == expected_calls
+    assert len(report["prior_startup_failures"]) == expected_calls - 1
+    if expected_calls == 2:
+        assert report["prior_startup_failures"][0]["error"] == error
+    assert report["status"] == ("FAIL" if always_fail else "PASS")

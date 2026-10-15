@@ -58,3 +58,11 @@ On device-parse failure the bounded original stdout/stderr is preserved, with
 driver incompatibility / dependency load failure / no device / invalid probe
 distinguished. A normal loaded CPU DLL line is not diagnosed as a missing DLL.
 Probe and model-start timeouts also retain startup technical output.
+
+Windows qualification v0.18 uses one real frozen batch for both 3×3 and 30×3
+fixtures and requires exactly one model startup, exercising the production engine
+reuse path. Startup and each image/request latency are separate. A qualification
+startup deadline may retry once, with the complete first failure retained in
+prior_startup_failures; gold mismatches never retry. This is build-time QA only,
+not a runtime OCR/batch retry policy. v0.17 remains immutable (Lite published;
+its Portable gate failed on a separate 30-row cold model startup deadline).

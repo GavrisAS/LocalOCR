@@ -38,3 +38,8 @@ model load and inference latency separately. It fails on synthetic gold mismatch
 RTX A4000 is the target; Linux evidence does not qualify Windows CUDA/Vulkan.
 Windows CPU frozen qualification and reassembled Portable checks stay mandatory.
 No software test or packaged DLL permits declaring GPU hardware PASS.
+
+Windows frozen qualification processes both fixtures in one actual CLI folder batch,
+checks a single shared engine startup, and verifies both workbooks against gold.
+Only ENGINE_STARTUP_TIMEOUT may trigger one build-time requalification; the first
+failed report is retained. A cell/type/shape mismatch fails immediately.

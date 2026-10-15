@@ -134,6 +134,8 @@ def failure_category(detail: str) -> str:
         )
     ):
         return "GPU_RUNTIME_OR_DRIVER_MISSING"
+    if "engine_startup_timeout" in text:
+        return "ENGINE_STARTUP_TIMEOUT"
     if "gpu_probe_invalid" in text:
         return "GPU_PROBE_INVALID"
     if "offload_unconfirmed" in text:

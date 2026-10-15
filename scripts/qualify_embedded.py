@@ -48,7 +48,34 @@ def synthetic(path: Path, rows: int):
     return expected
 
 
-def qualify(root: Path, output: Path, sha: str, isolated: bool, relocated=False):
+def frozen_batch_metadata(stdout: str, names: list[str]):
+    startup = [float(value) for value in re.findall(r"model load=([0-9.]+)s", stdout)]
+    backends = re.findall(r"Embedded F16 · (CPU|CUDA|VULKAN) ·", stdout)
+    if len(startup) != 1 or backends != ["CPU"]:
+        raise ValueError("Frozen CPU batch must load exactly one owned CPU engine")
+    cases = {}
+    for name in names:
+        marker = f"] {name}\n"
+        begin = stdout.find(marker)
+        end = stdout.find(f"] {name}: ", begin)
+        if begin < 0 or end < 0:
+            raise ValueError(f"Missing frozen batch progress: {name}")
+        trace = stdout[begin + len(marker) : end]
+        requests = [
+            float(value) for value in re.findall(r"Embedded recognize latency=([0-9.]+)s", trace)
+        ]
+        if not requests:
+            raise ValueError(f"Missing actual OCR latency: {name}")
+        cases[name] = {"ocr_request_seconds": requests, "technical_trace": trace[-20000:]}
+    return {
+        "startup_seconds": startup[0],
+        "actual_backend": "CPU",
+        "shared_engine": True,
+        "cases": cases,
+    }
+
+
+def qualify_once(root: Path, output: Path, sha: str, isolated: bool, relocated=False):
     evidence = {
         "status": "FAIL",
         "platform": sys.platform,
@@ -97,15 +124,17 @@ def qualify(root: Path, output: Path, sha: str, isolated: bool, relocated=False)
                     raise ValueError(
                         f"CPU/no-GPU runner device policy failed: {mode}: {check.stdout} {check.stderr}"
                     )
-            for rows in [3, 30]:
-                image = Path(directory) / f"synthetic-{rows}.png"
-                expected = synthetic(image, rows)
+            with tempfile.TemporaryDirectory(prefix="synthetic-batch-", dir=directory) as inputs:
+                input_dir = Path(inputs)
+                gold = {
+                    rows: synthetic(input_dir / f"synthetic-{rows}.png", rows) for rows in (3, 30)
+                }
                 started = time.monotonic()
                 result = subprocess.run(
                     [
                         str(exe),
                         "convert",
-                        str(image),
+                        str(input_dir),
                         "--provider",
                         "embedded",
                         "--precision",
@@ -122,67 +151,76 @@ def qualify(root: Path, output: Path, sha: str, isolated: bool, relocated=False)
                     timeout=1800,
                     env=isolated_environment(),
                 )
-                pipeline_seconds = time.monotonic() - started
-                xlsx = image.parent / "results" / (image.stem + ".xlsx")
-                if result.returncode not in {0, 1} or not xlsx.is_file():
-                    raise ValueError(
-                        f"Frozen vision pipeline failed ({rows} rows): {result.stdout} {result.stderr}"
-                    )
-                book = load_workbook(xlsx)
-                sheet = book["Таблица 1"]
-                observed = [
-                    [
-                        sheet.cell(r + 1, c + 1).comment.text
-                        if sheet.cell(r + 1, c + 1).comment
-                        else None
-                        for c in range(3)
+                evidence["batch_seconds"] = time.monotonic() - started
+                if result.returncode not in {0, 1}:
+                    raise ValueError(f"Frozen vision batch failed: {result.stdout} {result.stderr}")
+                metadata = frozen_batch_metadata(
+                    result.stdout, [f"synthetic-{rows}.png" for rows in gold]
+                )
+                evidence["batch_startup_seconds"] = metadata["startup_seconds"]
+                evidence["shared_engine"] = metadata["shared_engine"]
+                reports = list((input_dir / "results").glob("report-*.json"))
+                if len(reports) != 1:
+                    raise ValueError("Expected one real frozen batch report")
+                jobs = {
+                    item["source"]: item
+                    for item in json.loads(reports[0].read_text(encoding="utf-8"))["results"]
+                }
+                for rows, expected in gold.items():
+                    image = input_dir / f"synthetic-{rows}.png"
+                    xlsx = input_dir / "results" / (image.stem + ".xlsx")
+                    if not xlsx.is_file() or jobs.get(image.name, {}).get("status") not in {
+                        "SUCCESS",
+                        "REVIEW",
+                    }:
+                        raise ValueError(
+                            f"Frozen vision pipeline failed ({rows} rows): {result.stdout} {result.stderr}"
+                        )
+                    book = load_workbook(xlsx)
+                    sheet = book["Таблица 1"]
+                    observed = [
+                        [
+                            sheet.cell(r + 1, c + 1).comment.text
+                            if sheet.cell(r + 1, c + 1).comment
+                            else None
+                            for c in range(3)
+                        ]
+                        for r in range(rows)
                     ]
-                    for r in range(rows)
-                ]
-                shape = [sheet.max_row, sheet.max_column]
-                values = [[sheet.cell(r + 1, c + 1).value for c in range(3)] for r in range(rows)]
-                types = [
-                    [sheet.cell(r + 1, c + 1).data_type for c in range(3)] for r in range(rows)
-                ]
-                expected_values = [[row[0], int(row[1]), float(row[2])] for row in expected]
-                book.close()
-                mismatches = sum(
-                    a != b for er, ar in zip(expected, observed) for a, b in zip(er, ar)
-                )
-                evidence["cases"].append(
-                    {
-                        "rows": rows,
-                        "requested_mode": "cpu",
-                        "actual_backend": re.findall(
-                            r"Embedded F16 · (CPU|CUDA|VULKAN) ·", result.stdout
-                        ),
-                        "pipeline_seconds": pipeline_seconds,
-                        "startup_seconds": [
-                            float(value)
-                            for value in re.findall(r"model load=([0-9.]+)s", result.stdout)
-                        ],
-                        "ocr_request_seconds": [
-                            float(value)
-                            for value in re.findall(
-                                r"Embedded recognize latency=([0-9.]+)s", result.stdout
-                            )
-                        ],
-                        "technical_trace": result.stdout[-20000:],
-                        "shape": shape,
-                        "text_mismatches": mismatches,
-                        "values_match": values == expected_values,
-                        "cell_types": types,
-                        "xlsx_sha256": hashlib.sha256(xlsx.read_bytes()).hexdigest(),
-                        "exit_code": result.returncode,
-                    }
-                )
-                if (
-                    shape != [rows, 3]
-                    or mismatches
-                    or values != expected_values
-                    or any(t != ["s", "n", "n"] for t in types)
-                ):
-                    raise ValueError("Synthetic OCR cells/shape differ from known source")
+                    shape = [sheet.max_row, sheet.max_column]
+                    values = [
+                        [sheet.cell(r + 1, c + 1).value for c in range(3)] for r in range(rows)
+                    ]
+                    types = [
+                        [sheet.cell(r + 1, c + 1).data_type for c in range(3)] for r in range(rows)
+                    ]
+                    expected_values = [[row[0], int(row[1]), float(row[2])] for row in expected]
+                    book.close()
+                    mismatches = sum(
+                        a != b for er, ar in zip(expected, observed) for a, b in zip(er, ar)
+                    )
+                    evidence["cases"].append(
+                        {
+                            "rows": rows,
+                            "requested_mode": "cpu",
+                            "actual_backend": "CPU",
+                            "pipeline_seconds": jobs[image.name]["seconds"],
+                            **metadata["cases"][image.name],
+                            "shape": shape,
+                            "text_mismatches": mismatches,
+                            "values_match": values == expected_values,
+                            "cell_types": types,
+                            "xlsx_sha256": hashlib.sha256(xlsx.read_bytes()).hexdigest(),
+                            "exit_code": result.returncode,
+                        }
+                    )
+                    if (
+                        shape != [rows, 3]
+                        or mismatches
+                        or values != expected_values
+                        or any(t != ["s", "n", "n"] for t in types)
+                    ):
+                        raise ValueError("Synthetic OCR cells/shape differ from known source")
             evidence["status"] = "PASS" if sys.platform == "win32" and isolated else "PARTIAL"
     except Exception as error:
         evidence["error"] = str(error)
@@ -191,6 +229,33 @@ def qualify(root: Path, output: Path, sha: str, isolated: bool, relocated=False)
         output.write_text(json.dumps(evidence, indent=2, ensure_ascii=False), encoding="utf-8")
     if evidence["status"] != "PASS":
         raise ValueError("Windows/network isolation qualification remains PENDING")
+
+
+def qualify(root: Path, output: Path, sha: str, isolated: bool, relocated=False):
+    prior: list[dict[str, object]] = []
+    for attempt in (1, 2):
+        try:
+            qualify_once(root, output, sha, isolated, relocated)
+        except Exception as error:
+            report: dict[str, object] = (
+                json.loads(output.read_text(encoding="utf-8"))
+                if output.is_file()
+                else {"status": "FAIL", "error": str(error)}
+            )
+            report["qualification_attempts"] = attempt
+            report["prior_startup_failures"] = list(prior)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+            if attempt == 1 and "ENGINE_STARTUP_TIMEOUT" in str(error):
+                prior.append(report)
+                continue
+            raise
+        else:
+            report = json.loads(output.read_text(encoding="utf-8"))
+            report["qualification_attempts"] = attempt
+            report["prior_startup_failures"] = prior
+            output.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+            return
 
 
 if __name__ == "__main__":

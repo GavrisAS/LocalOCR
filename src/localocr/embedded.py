@@ -331,7 +331,7 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
                     self.settings = original
                 self.cancel.wait(0.05)
             raise OCRServerError(
-                "Истекло время загрузки Embedded модели\n"
+                "ENGINE_STARTUP_TIMEOUT: Истекло время загрузки Embedded модели\n"
                 + "\n".join(list(self.diagnostics))[-8192:]
             )
         except BaseException:
