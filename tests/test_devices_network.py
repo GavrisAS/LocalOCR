@@ -300,3 +300,50 @@ def test_unconfirmed_gpu_owned_cleanup(fake_engine, monkeypatch):  # noqa: F811
     assert len(launches) == 2
     with EmbeddedOCRProvider(settings) as client:
         assert "CPU" in client.doctor()
+
+
+def test_final_error_redacts_token_and_preserves_chain(monkeypatch):
+    lines = []
+
+    async def handle(request):
+        raise httpx.ConnectError("technical cause echoes secret-value", request=request)
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kw: original(transport=httpx.MockTransport(handle), **kw)
+    )
+    client = create_provider(
+        OpenWebUISettings(api_token="secret-value", retries=0), on_network_event=lines.append
+    )
+    with pytest.raises(OCRServerError) as caught:
+        client.doctor()
+    assert "secret-value" not in str(caught.value)
+    assert "TOKEN_OMITTED" in str(caught.value)
+    assert caught.value.__cause__ is not None
+    assert "secret-value" not in "\n".join(lines)
+
+
+def test_validation_event_category():
+    lines = []
+    with pytest.raises(ValueError):
+        create_provider(OpenWebUISettings(url="invalid-url"), on_network_event=lines.append)
+    assert "URL_INVALID" in "\n".join(lines)
+    assert "input=invalid-url" in "\n".join(lines)
+
+
+def test_worker_final_error_redacts_unexpected_exception(monkeypatch):
+    from localocr.gui.app import Worker
+
+    class Client:
+        def doctor(self):
+            raise RuntimeError("unexpected echoes secret-value")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("localocr.gui.app.create_provider", lambda *a, **kw: Client())
+    worker = Worker("", OpenWebUISettings(api_token="secret-value"), check=True)
+    errors = []
+    worker.error.connect(errors.append)
+    worker.run()
+    assert errors == ["unexpected echoes TOKEN_OMITTED"]

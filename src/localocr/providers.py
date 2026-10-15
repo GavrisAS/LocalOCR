@@ -170,7 +170,7 @@ def chat_text(data, *, single_table=False) -> str:
 
 
 def create_provider(settings, cancel: Event | None = None, on_network_event=None) -> OCRProvider:
-    from localocr.network import emit, exception_detail
+    from localocr.network import category, emit, exception_detail
 
     try:
         client = _create_provider(settings, cancel)
@@ -180,7 +180,7 @@ def create_provider(settings, cancel: Event | None = None, on_network_event=None
 
             emit(
                 SimpleNamespace(settings=settings, on_network_event=on_network_event),
-                f"Configuration / URL validation · input={getattr(settings, 'url', 'Embedded')} · {exception_detail(error)}",
+                f"{category(error)} · Configuration / URL validation · input={getattr(settings, 'url', 'Embedded')} · {exception_detail(error)}",
             )
         raise
     client.on_network_event = on_network_event

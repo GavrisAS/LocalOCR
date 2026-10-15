@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from localocr import __version__, build_commit
 from localocr.config import AppConfig, load_config, save_config, setup_logging
+from localocr.network import redact
 from localocr.ollama import Cancelled
 from localocr.providers import create_provider
 from localocr.service import convert
@@ -61,7 +62,7 @@ class Worker(QThread):
         except Cancelled:
             self.error.emit("Операция отменена")
         except Exception as error:
-            self.error.emit(str(error))
+            self.error.emit(redact(self.settings, str(error)))
 
 
 class Window(QMainWindow):

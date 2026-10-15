@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from localocr.network import category, emit, exception_detail, payload_summary
+from localocr.network import category, emit, exception_detail, payload_summary, redact
 
 
 class OCRServerError(RuntimeError):
@@ -252,6 +252,9 @@ class OllamaClient:
             raise
         except OCRServerError as error:
             emit(self, f"Результат: FAIL · {exception_detail(error)}")
+            safe = redact(self.settings, str(error))
+            if safe != str(error):
+                raise OCRServerError(safe) from error
             raise
 
     def doctor(self):

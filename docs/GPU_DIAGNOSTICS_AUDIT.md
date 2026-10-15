@@ -1,7 +1,8 @@
 # Embedded GPU / HTTP diagnostics audit
 
 Source base: v0.13 / 9939875118e9d02f438a80a3cbf8b7fc53fdc275.
-This change is intended for one main push and one immutable MINOR reservation.
+Initial implementation reserved v0.14. A required final exception-redaction fix
+uses a second main push and v0.15; v0.14 remains immutable.
 Final exact commit, tag, CI/release results and artifact hashes belong to the local
 handoff evidence produced after the push, not to a version bump commit.
 
@@ -40,3 +41,7 @@ canonical tables, spans, XLSX fidelity and atomic cancellation tests remain.
 
 Reproduce: commands in docs/TESTING.md. Handoff excludes weights, binaries and
 user documents/images/OCR outputs; only synthetic machine reports/logs are included.
+
+Final error strings and unexpected Qt worker exceptions also redact the configured
+token; original exception chains remain available in memory and are redacted when
+formatted into diagnostics. URL validation events explicitly carry URL_INVALID.

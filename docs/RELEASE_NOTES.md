@@ -31,3 +31,7 @@ GUI connection/OCR log now reports actual HTTP requests, response fragments/stat
 TLS/DNS/socket causes and timeout stages, with token and image omission. System
 proxy remains disabled (trust_env=False), redirects disabled, TLS verified. Live
 user OpenWebUI connection remains PENDING without its configured server credentials.
+
+Final diagnostics correction: configured tokens are omitted from final exception
+strings and Qt worker errors as well as transport events. Original technical causes
+remain chained. Invalid-URL constructor errors explicitly report URL_INVALID.

@@ -56,14 +56,17 @@ def category(error: BaseException) -> str:
     return "NETWORK_ERROR"
 
 
+def redact(settings, message: str) -> str:
+    token = getattr(settings, "api_token", "")
+    if token:
+        message = message.replace(token, "TOKEN_OMITTED")
+    return re.sub(r"[A-Za-z0-9+/]{128,}={0,2}", "IMAGE_BASE64_OMITTED", message)
+
+
 def emit(owner, message: str):
     if getattr(owner, "suppress_network_events", False):
         return
-    token = getattr(owner.settings, "api_token", "")
-    if token:
-        message = message.replace(token, "TOKEN_OMITTED")
-    message = re.sub(r"[A-Za-z0-9+/]{128,}={0,2}", "IMAGE_BASE64_OMITTED", message)
-    line = f"[{datetime.now():%H:%M:%S}] {message}"
+    line = f"[{datetime.now():%H:%M:%S}] {redact(owner.settings, message)}"
     logging.getLogger("localocr").info("%s", line)
     callback = getattr(owner, "on_network_event", None)
     if callback:
