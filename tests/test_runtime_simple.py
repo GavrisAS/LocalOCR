@@ -96,6 +96,7 @@ def test_simple_settings_and_controls():
     app.processEvents()
     assert len(window.findChildren(QRadioButton)) == 3
     assert not window.web_url.isVisible()
+    assert str(config_dir() / "config.json") in window.status.toPlainText()
     settings = window.runtime_settings()
     assert settings.api == "proxy" and settings.api_token == config.api_token
     for mode in ("gpu", "cpu"):

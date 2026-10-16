@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from localocr import __version__, build_commit
-from localocr.config import AppConfig, load_config, save_config, setup_logging
+from localocr.config import AppConfig, config_dir, load_config, save_config, setup_logging
 from localocr.network import redact
 from localocr.ollama import Cancelled
 from localocr.providers import create_provider
@@ -142,6 +142,7 @@ class Window(QMainWindow):
         self.status = QPlainTextEdit()
         self.status.setReadOnly(True)
         self.status.setMaximumBlockCount(3000)
+        self.status.appendPlainText(f"Настройки: {config_dir() / 'config.json'}")
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.addWidget(QLabel("Папка с изображениями"))
@@ -436,8 +437,6 @@ class SimpleWindow(Window):
                 value.strip()
                 for value in (config.openwebui_url, config.openwebui_model, config.api_token)
             ):
-                from localocr.config import config_dir
-
                 raise ValueError(
                     f"Укажите openwebui_url, openwebui_model и api_token в {config_dir() / 'config.json'} или в полном GUI (--full-gui)"
                 )
