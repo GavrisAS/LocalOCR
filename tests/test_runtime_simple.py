@@ -104,6 +104,9 @@ def test_simple_settings_and_controls():
         assert settings.device_mode == mode and settings.precision == "f16"
         assert window.current_config().provider == "ollama"
         assert window.current_config().openwebui_api == "chat"
+        assert window.current_config().precision == "q8_0"
+        window.update_progress(1, 2, "progress")
+        assert window.mode_buttons[mode].text() in window.statusBar().currentMessage()
     window.open_results()
     assert "не существует" in window.status.toPlainText()
     window.close()

@@ -182,12 +182,18 @@ class Window(QMainWindow):
         layout.addWidget(self.status)
         layout.addWidget(self.open)
         self.setCentralWidget(central)
-        self.statusBar().showMessage(f"Версия {__version__}")
+        self.show_status("Готово")
         self.browse.clicked.connect(self.choose)
         self.check.clicked.connect(lambda: self.launch(True))
         self.start.clicked.connect(lambda: self.launch(False))
         self.stop.clicked.connect(self.cancel)
         self.open.clicked.connect(self.open_results)
+
+    def mode_label(self):
+        return self.provider.currentText()
+
+    def show_status(self, message):
+        self.statusBar().showMessage(f"Версия {__version__} · {self.mode_label()} · {message}")
 
     def update_mode(self):
         for mode, widgets in self.mode_widgets.items():
@@ -287,20 +293,20 @@ class Window(QMainWindow):
     @Slot(str)
     def task_error(self, message):
         self.status.appendPlainText(message)
-        self.statusBar().showMessage(f"Версия {__version__} · Ошибка / отмена")
+        self.show_status("Ошибка / отмена")
 
     @Slot(str)
     def update_embedded_status(self, message):
         self.embedded_status.setText(message)
         self.status.appendPlainText(message)
-        self.statusBar().showMessage(f"Версия {__version__} · {message}")
+        self.show_status(message)
 
     def update_progress(self, done, total, message):
         self.bar.setRange(0, total + 1)
         self.bar.setValue(done)
         self.bar.setFormat(f"{done} / {total}")
         self.status.appendPlainText(message)
-        self.statusBar().showMessage(f"Версия {__version__} · {done}/{total}")
+        self.show_status(f"{done}/{total}")
 
     def completed(self, result):
         if isinstance(result, str):
@@ -325,7 +331,7 @@ class Window(QMainWindow):
             self.bar.setRange(0, 1)
             self.bar.setValue(1)
             self.bar.setFormat("Завершено")
-            self.statusBar().showMessage(f"Версия {__version__} · Завершено")
+            self.show_status("Завершено")
 
     def finished(self):
         global _ACTIVE_WORKER
@@ -412,12 +418,16 @@ class SimpleWindow(Window):
             (mode for mode, button in self.mode_buttons.items() if button.isChecked()), "server"
         )
 
+    def mode_label(self):
+        if not hasattr(self, "mode_buttons"):
+            return "Сервер"
+        return self.mode_buttons[self.mode()].text()
+
     def mode_status(self):
-        label = self.mode_buttons[self.mode()].text()
-        self.statusBar().showMessage(f"Версия {__version__} · {label}")
+        self.show_status("Готово")
 
     def current_config(self):
-        return replace(super().current_config(), simple_mode=self.mode())
+        return replace(self.config, folder=self.folder.text(), simple_mode=self.mode())
 
     def runtime_settings(self):
         config = self.current_config()

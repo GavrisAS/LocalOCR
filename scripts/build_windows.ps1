@@ -29,11 +29,10 @@ try {
     if (-not (Test-Path 'dist/LocalOCR/localocr.log')) { throw 'Portable log missing' }
     # Runtime settings/logs from smoke must never enter release assets.
     Remove-Item dist/LocalOCR/config.json,dist/LocalOCR/localocr.log -ErrorAction SilentlyContinue
-    uv run python scripts/frozen_smoke.py --exe dist/LocalOCR-CLI/LocalOCR-CLI.exe --version $BuildVersion --commit $commit
-    Checked 'CLI frozen smoke'
-    Remove-Item dist/LocalOCR-CLI/localocr.log -ErrorAction SilentlyContinue
     Copy-Item README.md dist/LocalOCR/README.md
     Copy-Item -Recurse dist/LocalOCR-CLI dist/LocalOCR/LocalOCR-CLI
+    uv run python scripts/frozen_smoke.py --exe dist/LocalOCR/LocalOCR-CLI/LocalOCR-CLI.exe --version $BuildVersion --commit $commit
+    Checked 'CLI frozen smoke'
     uv run python scripts/portable_smoke.py --root dist/LocalOCR --version $BuildVersion --commit $commit
     Checked 'Portable paths frozen smoke'
     $zip = "dist/LocalOCR-v$BuildVersion-windows-x64.zip"
