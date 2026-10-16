@@ -1,4 +1,4 @@
-"""Per-user settings; never inside a frozen bundle."""
+"""Portable typed settings and rotating application log."""
 
 import json
 import logging
@@ -7,21 +7,24 @@ import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from localocr.runtime import portable_root
+
 
 @dataclass
 class AppConfig:
     folder: str = ""
     ollama_url: str = "http://127.0.0.1:11434"
-    provider: str = "ollama"
+    provider: str = "openwebui"
     ollama_model: str = "glm-ocr:latest"
-    openwebui_url: str = "http://127.0.0.1:8080"
-    openwebui_model: str = "glm-ocr:latest"
+    openwebui_url: str = ""
+    openwebui_model: str = ""
     api_token: str = ""
     openwebui_api: str = "proxy"
-    ssl_verify: bool = True
+    ssl_verify: bool = False
     trust_env: bool = False
     precision: str = "f16"
     embedded_device: str = "auto"
+    simple_mode: str = "server"
 
     def settings(self, timeout=300):
         from localocr.embedded import EmbeddedSettings
@@ -48,25 +51,47 @@ class AppConfig:
 
 
 def config_dir() -> Path:
+    return portable_root()
+
+
+def legacy_config() -> Path:
     if os.name == "nt":
-        return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "LocalOCR"
-    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "LocalOCR"
+        return (
+            Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+            / "LocalOCR"
+            / "config.json"
+        )
+    return (
+        Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+        / "LocalOCR"
+        / "config.json"
+    )
 
 
 def load_config() -> AppConfig:
     try:
-        data = json.loads((config_dir() / "config.json").read_text(encoding="utf-8"))
+        path = config_dir() / "config.json"
+        migrating = not path.exists()
+        data = json.loads((legacy_config() if migrating else path).read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return AppConfig()
         from dataclasses import fields
 
-        return AppConfig(
+        config = AppConfig(
             **{
                 f.name: data[f.name]
                 for f in fields(AppConfig)
                 if f.name in data and type(data[f.name]) is type(f.default)
             }
         )
+        if migrating:
+            try:
+                save_config(config)
+            except OSError as error:
+                logging.getLogger("localocr").warning(
+                    "Legacy import could not save portable config: %s", type(error).__name__
+                )
+        return config
     except OSError, ValueError:
         return AppConfig()
 
@@ -88,11 +113,17 @@ def setup_logging():
     directory.mkdir(parents=True, exist_ok=True)
     from logging.handlers import RotatingFileHandler
 
+    logger = logging.getLogger("localocr")
+    target = str((directory / "localocr.log").resolve())
+    for existing in list(logger.handlers):
+        if isinstance(existing, RotatingFileHandler):
+            if existing.baseFilename == target:
+                return
+            logger.removeHandler(existing)
+            existing.close()
     handler = RotatingFileHandler(
         directory / "localocr.log", maxBytes=2_000_000, backupCount=2, encoding="utf-8"
     )
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    logger = logging.getLogger("localocr")
-    if not logger.handlers:
-        logger.addHandler(handler)
+    logger.addHandler(handler)
     logger.setLevel(logging.INFO)

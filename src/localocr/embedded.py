@@ -4,7 +4,6 @@ import os
 import secrets
 import socket
 import subprocess
-import sys
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -21,15 +20,9 @@ from localocr.devices import (
 from localocr.network import emit
 from localocr.ollama import OCRServerError
 from localocr.providers import OpenWebUIChatProvider, OpenWebUISettings, chat_payload, chat_text
+from localocr.runtime import portable_root
 
 _ENGINE_LOCK = Lock()
-
-
-def portable_root() -> Path:
-    if getattr(sys, "frozen", False):
-        directory = Path(sys.executable).resolve().parent
-        return directory.parent if directory.name == "LocalOCR-CLI" else directory
-    return Path(__file__).resolve().parents[2]
 
 
 @dataclass(frozen=True)

@@ -30,11 +30,11 @@ def test_config_migration_and_gui(tmp_path, monkeypatch):
     data.update(folder=42, unknown=False)
     path.write_text(json.dumps(data))
     config = load_config()
-    assert config.ssl_verify is True and config.trust_env is False
+    assert config.ssl_verify is False and config.trust_env is False
     assert config.folder == "" and config.api_token == "fixture-token"
     data.update(ssl_verify="false", trust_env=True)
     path.write_text(json.dumps(data))
-    assert load_config().ssl_verify is True
+    assert load_config().ssl_verify is False
     app = QApplication.instance() or QApplication([])
     window = Window()
     window.ssl_verify.setChecked(False)

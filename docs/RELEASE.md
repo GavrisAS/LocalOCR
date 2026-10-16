@@ -36,3 +36,9 @@ GPU candidate (`GPU_HARDWARE_PENDING`); it must not say GPU VERIFIED. Linux hard
 evidence is separate. Clean Windows VM, Windows GPU and internet-disconnected
 hardware evidence remain separate qualifications. Existing immutable reservation,
 Lite frozen checks, exact manifest and same-SHA rerun remain authoritative.
+
+Portable settings: оба GUI smoke обязательны (`--smoke-test` и
+`--full-gui --smoke-test`). Не включать runtime config/token/log/lock в архивы;
+config создаётся при первом запуске, обновление ZIP не перезаписывает пользовательский
+файл. Общий runtime root находится рядом с GUI EXE, включая вложенный CLI.
+Не менять immutable MAJOR.MINOR reservation/rerun и Windows F16 qualification gates.

@@ -9,7 +9,7 @@ DNS pinning, проверка адресов, cancellation polling 50 ms.
 `excel.py`: только проверенная модель, openpyxl, стили/spans/безопасные значения,
 временный XLSX, повторное открытие, атомарная публикация.
 `cli.py`: Typer; `gui/app.py`: QtWidgets, QThread, сигналы, Event отмены.
-`config.py`: атомарный per-user JSON и rotating log.
+`config.py`: атомарный portable JSON и rotating log.
 
 GUI/CLI не содержат таблиц или логики OCR. Один service API. Runtime запускает
 только обработку данных; не исполняет код/HTML и не вызывает dev-инструменты.
@@ -42,3 +42,10 @@ carry the callback, including preflight doctor failure. Worker emits Qt signals;
 only the main thread updates QPlainTextEdit (3000 blocks). Rotating application
 logging receives the same redacted lines. HTTP routing/auth/payload and TLS/proxy/
 redirect policy are unchanged. Connection diagnostics do not prove model access.
+
+`runtime.portable_root()` — единый источник путей для config/log/Embedded lock и
+внутренних компонентов. Frozen: родитель EXE (для вложенного LocalOCR-CLI — выше
+на один уровень), source: parents[2] от модуля. `_MEIPASS`, CWD и config-env не
+участвуют. ROOT_OVERRIDE — только явная тестовая инъекция. Legacy import read-only.
+SimpleWindow переиспользует Window lifecycle, меняет только представление и
+runtime_settings через dataclasses.replace; исходные настройки не переписываются.

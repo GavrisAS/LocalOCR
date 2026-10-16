@@ -1,17 +1,20 @@
 # LocalOCR
 
 Автономное приложение для преобразования изображений таблиц в Excel через
-**glm-ocr:latest**, установленную на явно выбранном локальном/LAN сервере Ollama.
+OpenWebUI Ollama Proxy, локальную Embedded GLM-OCR или явно выбранный Ollama.
 Candidate: точность OCR не гарантируется; результаты требуют сверки с оригиналом.
 Нет runtime-зависимости от Codex, ChatGPT, облачных LLM или интернета.
 
 ## Windows
 
-Скачайте ZIP и SHA256 из private GitHub Release, проверьте checksum, распакуйте
-всю папку. Запустите `LocalOCR/LocalOCR.exe`. Выберите папку, укажите Ollama URL,
+Скачайте ZIP и SHA256 из GitHub Release, проверьте checksum, распакуйте
+всю папку в доступное для записи место. Запустите `LocalOCR/LocalOCR.exe`.
+Заполните OpenWebUI URL/model/token в `config.json` рядом с EXE или через
+`LocalOCR.exe --full-gui`. В простом окне выберите папку,
 нажмите «Проверить подключение», затем «Начать обработку». Результаты — в
 `results` внутри выбранной папки. Python, uv, Excel и Codex не нужны.
-Модель в дистрибутив не включена. Для LAN Ollama на клиенте устанавливать не нужно.
+Lite не включает модель; Portable F16 включает локальные компоненты Embedded.
+Для LAN Ollama на клиенте устанавливать не нужно.
 Модель и сервер предварительно подготавливает администратор; приложение ничего
 не скачивает и не запускает `ollama pull`.
 
@@ -29,7 +32,7 @@ Python 3.14, uv; Linux для Qt нужны libEGL/libOpenGL.
 uv sync --locked
 uv run localocr --version
 uv run localocr doctor --ollama-url http://127.0.0.1:11434
-uv run localocr convert "image.jpg"
+uv run localocr convert "image.jpg" --provider ollama
 uv run localocr convert "/path/to/images" --ollama-url http://192.168.1.100:11434
 uv run localocr-gui
 make check
@@ -65,11 +68,12 @@ Exit codes: 0 — SUCCESS/SKIPPED; 1 — REVIEW/FAILED (включая полн�
 
 Безопасность сети: только loopback, RFC1918 и IPv6 ULA. Все DNS-адреса проверяются,
 соединение закрепляется за IP, Host/TLS SNI сохраняются. Прокси и redirects
-отключены, TLS verification включена. Публичные и link-local адреса отклоняются.
+отключены для Ollama; TLS verification включена. Публичные и link-local адреса
+Ollama отклоняются. OpenWebUI использует явно заданный URL и сохранённые TLS/proxy настройки.
 Приложение не обращается к серверам обновлений, лицензирования или телеметрии.
 
-Настройки и ограниченный локальный лог: `%LOCALAPPDATA%\LocalOCR` на Windows,
-`$XDG_CONFIG_HOME/LocalOCR` или `~/.config/LocalOCR` на Linux.
+Настройки и ограниченный локальный лог: `config.json`, `localocr.log` (ротация `.1`, `.2`) рядом с `LocalOCR.exe`;
+из исходников — в корне checkout, независимо от CWD.
 Лог и отчёт содержат имена/пути и статусы, но не содержимое ячеек/ответов.
 `--diagnostics` сохраняет полные OCR-ответы локально; они могут быть конфиденциальны.
 
@@ -127,12 +131,76 @@ localocr convert C:\Images --use-config --device cpu
 HTTP 401 означает отказ авторизации; 404 — ответ маршрута/endpoint; 502 — ответ
 сервера (возможная проблема upstream). `TLS_CERTIFICATE_VERIFY_FAILED` показывает
 ошибку цепочки сертификата, `DNS_ERROR` — ошибку разрешения имени с исходной причиной.
-TLS проверяется, redirects запрещены, `trust_env=False`: системные proxy переменные
+OpenWebUI TLS по сохранённому ssl_verify (default false), redirects запрещены, `trust_env=False`: системные proxy переменные
 не используются. Это намеренная сетевая политика, не автоматический диагноз proxy.
 
 Лог можно выделить и скопировать; копия пишется в `localocr.log` рядом с config.json
-(Windows `%LOCALAPPDATA%\LocalOCR`, Linux `$XDG_CONFIG_HOME/LocalOCR` либо
-`~/.config/LocalOCR`). Токен остаётся в JSON, но скрывается в диагностике;
+(рядом с `LocalOCR.exe`, из исходников — в корне checkout). Токен остаётся в JSON, но скрывается в диагностике;
 изображения/base64 и успешный OCR-текст не логируются. CLI: `--debug-http`.
 HTTP API доступен и модель видна — ещё не доказательство успешного OCR; Chat явно
 сообщает о мягкой проверке, если model ID отсутствует в списке.
+
+## Переносимые настройки и два GUI
+
+Без аргументов открывается компактное окно: папка, «Сервер», «GPU (локально)»,
+«CPU (локально)», проверка, обработка и отмена. Полные настройки доступны через
+`--full-gui`. Оба окна используют тот же Worker и OCR service.
+
+```powershell
+.\LocalOCR.exe
+.\LocalOCR.exe --full-gui
+.\LocalOCR-CLI\LocalOCR-CLI.exe doctor --use-config
+```
+
+В ярлыке Windows поле Target: `"D:\LocalOCR\LocalOCR.exe" --full-gui`.
+Поле Start in не влияет на пути. Из исходников: `uv run localocr-gui`,
+`uv run localocr-gui --full-gui`, `uv run localocr doctor --use-config`.
+
+В комплекте `D:\LocalOCR\` находятся `LocalOCR.exe`, `config.json`,
+`localocr.log`, `localocr.log.1`, `localocr.log.2`, `embedded.lock`.
+Вложенный `LocalOCR-CLI\LocalOCR-CLI.exe` использует эти же файлы.
+Из исходников корень — checkout, вычисленный из расположения модуля.
+Переносите всю директорию, включая `_internal`, `embedded` и `LocalOCR-CLI`.
+Lite и Portable в разных каталогах имеют независимые настройки.
+Каталог должен быть доступен для записи; Program Files не рекомендуется.
+Администратор не требуется. При ошибке записи приложение сообщает об ошибке,
+без перехода в пользовательский каталог.
+
+На первом старте создаётся JSON без данных сервера. Заполните три пустые строки
+самостоятельно или откройте полный GUI. Пример без учётных данных:
+
+```json
+{
+  "provider": "openwebui",
+  "openwebui_api": "proxy",
+  "openwebui_url": "",
+  "openwebui_model": "",
+  "api_token": "",
+  "ssl_verify": false,
+  "trust_env": false,
+  "precision": "f16",
+  "embedded_device": "auto",
+  "simple_mode": "server"
+}
+```
+
+Токен хранится обычным текстом в этом JSON. Пользовательские defaults OpenWebUI:
+`ssl_verify=false`, `trust_env=false`; переключатели есть в полном GUI и действуют
+для Proxy и Chat. Сохранённые boolean при миграции не меняются. Остальные провайдеры
+проверяют TLS. Пустые URL/model/token блокируют серверную задачу простого окна.
+«Сервер» всегда использует OpenWebUI Ollama Proxy; GPU — Embedded F16, strict GPU
+(CUDA → Vulkan, без CPU fallback); CPU — Embedded F16 CPU-only. Выбор режима
+не меняет скрытые параметры полного окна. CLI с `--use-config` читает общий JSON,
+явные флаги имеют приоритет.
+
+Сохранение JSON атомарное: временный файл рядом, затем `os.replace`. При наличии
+portable JSON старые каталоги не читаются. При отсутствии допускается однократный
+импорт старого config из `%LOCALAPPDATA%\LocalOCR` (Linux: XDG/`~/.config/LocalOCR`):
+только чтение, старые файлы не изменяются, логи не переносятся. Ошибка чтения
+не блокирует defaults; новый путь показывается при незаполненной конфигурации.
+Шаблон в ZIP не поставляется, поэтому обновление не перезаписывает настройки.
+
+OCR-результаты остаются в `results` рядом с исходными изображениями: XLSX,
+атомарные временные XLSX и JSON-отчёты. Папка изображений задаётся пользователем.
+Опциональный `--diagnostics` сохраняет чувствительные OCR-ответы в
+`<корень Portable>/diagnostics/<имя результата>/`; по умолчанию выключен.

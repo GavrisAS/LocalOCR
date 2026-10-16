@@ -44,7 +44,7 @@ def server():
             if body is None:
                 body = (
                     {"models": [{"name": "glm-ocr:latest"}]}
-                    if self.path == "/api/tags"
+                    if self.path.endswith("/api/tags")
                     else {"response": state["text"], "done": True, "done_reason": "stop"}
                 )
             try:
@@ -59,3 +59,8 @@ def server():
     yield f"http://127.0.0.1:{httpd.server_port}", state
     httpd.shutdown()
     httpd.server_close()
+
+
+@pytest.fixture(autouse=True)
+def portable_test_root(tmp_path, monkeypatch):
+    monkeypatch.setattr("localocr.runtime.ROOT_OVERRIDE", tmp_path / "runtime")

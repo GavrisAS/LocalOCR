@@ -1,6 +1,8 @@
 """Responsive Qt window, shared service, cancellable worker threads."""
 
+import argparse
 import sys
+from dataclasses import replace
 from pathlib import Path
 from threading import Event
 
@@ -8,6 +10,7 @@ from PySide6.QtCore import QThread, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -15,9 +18,11 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QRadioButton,
     QVBoxLayout,
     QWidget,
 )
@@ -27,6 +32,7 @@ from localocr.config import AppConfig, load_config, save_config, setup_logging
 from localocr.network import redact
 from localocr.ollama import Cancelled
 from localocr.providers import create_provider
+from localocr.runtime import write_error
 from localocr.service import convert
 
 
@@ -72,7 +78,14 @@ class Worker(QThread):
             self.error.emit("Операция отменена")
         except Exception as error:
             self.runtime_status.emit("Embedded: ошибка; состояние не подтверждено")
-            self.error.emit(redact(self.settings, str(error)))
+            self.error.emit(
+                redact(
+                    self.settings, write_error(error) if isinstance(error, OSError) else str(error)
+                )
+            )
+
+
+_ACTIVE_WORKER: Worker | None = None
 
 
 class Window(QMainWindow):
@@ -174,11 +187,7 @@ class Window(QMainWindow):
         self.check.clicked.connect(lambda: self.launch(True))
         self.start.clicked.connect(lambda: self.launch(False))
         self.stop.clicked.connect(self.cancel)
-        self.open.clicked.connect(
-            lambda: QDesktopServices.openUrl(
-                QUrl.fromLocalFile(str(Path(self.folder.text()) / "results"))
-            )
-        )
+        self.open.clicked.connect(self.open_results)
 
     def update_mode(self):
         for mode, widgets in self.mode_widgets.items():
@@ -187,6 +196,7 @@ class Window(QMainWindow):
 
     def current_config(self):
         return AppConfig(
+            simple_mode=self.config.simple_mode,
             folder=self.folder.text(),
             ollama_url=self.url.text(),
             provider=self.provider.currentData(),
@@ -225,22 +235,49 @@ class Window(QMainWindow):
         if folder:
             self.folder.setText(folder)
 
+    def runtime_settings(self):
+        return self.current_config().settings()
+
+    def open_results(self):
+        folder = Path(self.folder.text())
+        if (
+            not self.folder.text().strip()
+            or not folder.is_dir()
+            or not (folder / "results").is_dir()
+        ):
+            self.status.appendPlainText(
+                "Папка результатов не существует; выберите папку с изображениями"
+            )
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str((folder / "results").resolve())))
+
     def launch(self, check=False):
+        global _ACTIVE_WORKER
+        if _ACTIVE_WORKER is not None:
+            self.status.appendPlainText("Другая задача LocalOCR уже выполняется")
+            return
         if self.worker is not None:
             return
         try:
+            settings = self.runtime_settings()
             save_config(self.current_config())
-        except OSError as error:
-            self.status.appendPlainText(f"Не удалось сохранить настройки: {error}")
+        except (OSError, ValueError) as error:
+            self.status.appendPlainText(
+                write_error(error) if isinstance(error, OSError) else str(error)
+            )
+            return
         self.bar.setRange(0, 0)
-        self.worker = Worker(self.folder.text(), self.current_config().settings(), check)
-        if self.provider.currentData() == "embedded":
+        self.worker = Worker(self.folder.text(), settings, check)
+        _ACTIVE_WORKER = self.worker
+        from localocr.embedded import EmbeddedSettings
+
+        if isinstance(settings, EmbeddedSettings):
             self.embedded_status.setText("Embedded: проверка runtime…")
             self.worker.runtime_status.connect(self.update_embedded_status)
         self.worker.network.connect(self.status.appendPlainText)
         self.worker.progress.connect(self.update_progress)
         self.worker.result.connect(self.completed)
-        self.worker.error.connect(self.status.appendPlainText)
+        self.worker.error.connect(self.task_error)
         self.worker.finished.connect(self.finished)
         for control in self.controls():
             control.setEnabled(False)
@@ -248,14 +285,22 @@ class Window(QMainWindow):
         self.worker.start()
 
     @Slot(str)
+    def task_error(self, message):
+        self.status.appendPlainText(message)
+        self.statusBar().showMessage(f"Версия {__version__} · Ошибка / отмена")
+
+    @Slot(str)
     def update_embedded_status(self, message):
         self.embedded_status.setText(message)
+        self.status.appendPlainText(message)
+        self.statusBar().showMessage(f"Версия {__version__} · {message}")
 
     def update_progress(self, done, total, message):
         self.bar.setRange(0, total + 1)
         self.bar.setValue(done)
         self.bar.setFormat(f"{done} / {total}")
         self.status.appendPlainText(message)
+        self.statusBar().showMessage(f"Версия {__version__} · {done}/{total}")
 
     def completed(self, result):
         if isinstance(result, str):
@@ -280,8 +325,11 @@ class Window(QMainWindow):
             self.bar.setRange(0, 1)
             self.bar.setValue(1)
             self.bar.setFormat("Завершено")
+            self.statusBar().showMessage(f"Версия {__version__} · Завершено")
 
     def finished(self):
+        global _ACTIVE_WORKER
+        _ACTIVE_WORKER = None
         worker = self.worker
         self.worker = None
         if worker:
@@ -307,24 +355,111 @@ class Window(QMainWindow):
         else:
             try:
                 save_config(self.current_config())
-            except OSError:
-                self.status.appendPlainText("Не удалось сохранить настройки")
+            except OSError as error:
+                self.status.appendPlainText(write_error(error))
+                event.ignore()
+                return
             event.accept()
 
 
-def main():
-    setup_logging()
-    app = QApplication(sys.argv)
-    window = Window()
-    window.show()
-    if "--smoke-test" in sys.argv:
-        index = sys.argv.index("--expected-version") if "--expected-version" in sys.argv else -1
-        if index >= 0 and sys.argv[index + 1] != __version__:
-            return 2
-        commit_index = (
-            sys.argv.index("--expected-commit") if "--expected-commit" in sys.argv else -1
+class SimpleWindow(Window):
+    """Compact view sharing the full window's worker and task lifecycle."""
+
+    def __init__(self):
+        super().__init__()
+        old = self.takeCentralWidget()
+        assert old is not None
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.addWidget(QLabel("Папка с изображениями:"))
+        row = QHBoxLayout()
+        row.addWidget(self.folder)
+        row.addWidget(self.browse)
+        layout.addLayout(row)
+        layout.addWidget(QLabel("Способ распознавания:"))
+        self.modes = QButtonGroup(self)
+        self.mode_buttons = {}
+        row = QHBoxLayout()
+        for mode, label in [
+            ("server", "Сервер"),
+            ("gpu", "GPU (локально)"),
+            ("cpu", "CPU (локально)"),
+        ]:
+            button = QRadioButton(label)
+            self.modes.addButton(button)
+            self.mode_buttons[mode] = button
+            row.addWidget(button)
+            button.toggled.connect(self.mode_status)
+        selected = (
+            self.config.simple_mode if self.config.simple_mode in self.mode_buttons else "server"
         )
-        if commit_index >= 0 and sys.argv[commit_index + 1] != build_commit():
+        self.mode_buttons[selected].setChecked(True)
+        layout.addLayout(row)
+        row = QHBoxLayout()
+        for button in (self.check, self.start, self.stop):
+            row.addWidget(button)
+        layout.addLayout(row)
+        for widget in (self.bar, self.status, self.open):
+            layout.addWidget(widget)
+        # Keep advanced controls alive, hidden, as the single configuration editor.
+        old.setParent(central)
+        old.hide()
+        self.setCentralWidget(central)
+        self.resize(760, 480)
+
+    def mode(self):
+        return next(
+            (mode for mode, button in self.mode_buttons.items() if button.isChecked()), "server"
+        )
+
+    def mode_status(self):
+        label = self.mode_buttons[self.mode()].text()
+        self.statusBar().showMessage(f"Версия {__version__} · {label}")
+
+    def current_config(self):
+        return replace(super().current_config(), simple_mode=self.mode())
+
+    def runtime_settings(self):
+        config = self.current_config()
+        if self.mode() == "server":
+            if not all(
+                value.strip()
+                for value in (config.openwebui_url, config.openwebui_model, config.api_token)
+            ):
+                from localocr.config import config_dir
+
+                raise ValueError(
+                    f"Укажите openwebui_url, openwebui_model и api_token в {config_dir() / 'config.json'} или в полном GUI (--full-gui)"
+                )
+            return replace(config, provider="openwebui", openwebui_api="proxy").settings()
+        return replace(
+            config, provider="embedded", precision="f16", embedded_device=self.mode()
+        ).settings()
+
+    def controls(self):
+        return [*super().controls(), *self.mode_buttons.values()]
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--full-gui", action="store_true")
+    parser.add_argument("--smoke-test", action="store_true")
+    parser.add_argument("--expected-version")
+    parser.add_argument("--expected-commit")
+    args, qt_args = parser.parse_known_args()
+    app = QApplication([sys.argv[0], *qt_args])
+    try:
+        setup_logging()
+        window = Window() if args.full_gui else SimpleWindow()
+        save_config(window.current_config())
+    except OSError as error:
+        QMessageBox.critical(None, "LocalOCR: каталог недоступен для записи", write_error(error))
+        return 2
+    window.show()
+    if args.smoke_test:
+        if args.expected_version and args.expected_version != __version__:
+            return 2
+        if args.expected_commit and args.expected_commit != build_commit():
             return 2
         QTimer.singleShot(300, window.close)
         QTimer.singleShot(500, app.quit)

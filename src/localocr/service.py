@@ -273,7 +273,9 @@ def convert(
                         path.name, "SKIPPED", str(target), "Результат уже существует"
                     )
                 else:
-                    diag = output_dir / "diagnostics" / target.stem if diagnostics else None
+                    from localocr.runtime import portable_root
+
+                    diag = portable_root() / "diagnostics" / target.stem if diagnostics else None
                     image = load_image(path)
                     document = recognize_document(image, client, diag)
                     warnings = sum(

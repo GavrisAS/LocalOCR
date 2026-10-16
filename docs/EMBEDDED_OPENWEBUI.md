@@ -11,7 +11,8 @@ OpenWebUI: пользовательские URL, Model ID, API-токен и т�
 Ollama Proxy. Токен хранится открытым текстом в обычном пользовательском config.json.
 Все поля сохраняются независимо. Старый config.json folder/ollama_url мигрирует
 с режимом Ollama. Нет keyring/шифрования/автоматического переключения backend.
-Runtime не скачивает модель; HTTP proxies и redirects выключены, TLS проверяется.
+Runtime не скачивает модель; redirects выключены. OpenWebUI defaults:
+ssl_verify=false, trust_env=false; сохранённые настройки имеют приоритет.
 OpenWebUI допускает корпоративный домен, HTTPS, порт и prefix; Direct Ollama
 по-прежнему допускает только loopback/LAN.
 
@@ -104,12 +105,12 @@ write/pool/deadline различаются. Неизвестная причин�
 HTTP 401 → проверьте токен; 403 → доступ; 404 → путь и API; 502 → изучите ответ
 reverse proxy/upstream. Это возможные объяснения наблюдаемого статуса.
 Redirect показывает Location и не выполняется. Префикс не исправляется по догадке.
-`trust_env=False` отключает proxy из окружения, TLS verify=True; отключать TLS или
+`trust_env=False` отключает proxy из окружения, OpenWebUI default TLS verify=False; менять TLS или
 пробовать HTTP автоматически приложение не будет.
 
 Лог находится в текущем QPlainTextEdit (штатное выделение/копирование) и файле
-`localocr.log` рядом с config.json: `%LOCALAPPDATA%\LocalOCR` на Windows,
-`$XDG_CONFIG_HOME/LocalOCR` либо `~/.config/LocalOCR` на Linux. CLI имеет `--debug-http`.
+`localocr.log` рядом с config.json и `LocalOCR.exe`,
+из исходников — в корне checkout. CLI имеет `--debug-http`.
 Токен хранится обычным текстом в config.json и исключается из диагностических строк.
 HTTP 200 не означает OCR PASS: список моделей, видимость model ID и настоящий OCR
 проверяются отдельно; Chat сохраняет мягкую проверку видимости.

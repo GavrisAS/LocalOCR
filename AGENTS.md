@@ -2,7 +2,10 @@
 Python 3.14, src package, uv and committed lockfile. GUI and CLI call the same service.
 Runtime may contact only the selected local/LAN Ollama, explicitly configured OpenWebUI,
 or owned loopback Embedded engine. No redirects, model downloads, generated code or telemetry. HTTP environment
-proxies are opt-in for explicitly configured OpenWebUI only. OpenWebUI tokens are plain text in user JSON. TLS certificates are verified by default; only OpenWebUI permits explicit opt-out.
+proxies are opt-in for explicitly configured OpenWebUI only. OpenWebUI tokens are plain text in user JSON. TLS certificates are verified except OpenWebUI user defaults ssl_verify=false, trust_env=false.
+All owned config/log/lock/diagnostics live in the shared portable executable root
+(source: checkout root), never user-config locations. Legacy config import is read-only.
+Default GUI is simple Server/GPU/CPU; --full-gui opens advanced settings.
 Never infer missing values or ambiguous cell placement. Preserve source images.
 Writer consumes validated canonical tables; OCR strings never become formulas.
 Cancellation must prevent publication of unfinished workbooks. Sensitive OCR artifacts

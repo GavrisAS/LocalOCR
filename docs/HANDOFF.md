@@ -1,6 +1,6 @@
 # Воспроизводимый handoff
 
-Исходники: private https://github.com/GavrisAS/LocalOCR, main. Release tags
+Исходники: https://github.com/GavrisAS/LocalOCR, main. Release tags
 неизменны и указывают на commit каждой push-версии. Скачать source:
 
 ```bash
@@ -48,3 +48,11 @@ RTX A4000 evidence and Windows GPU limitations. The local `.evidence/audit-v018`
 handoff contains the exact committed source snapshot, machine reports, GUI mock
 log/screenshot and remote CI/release evidence when available. This directory is
 ignored by Git. It must not include model weights, engine binaries or user images.
+
+Portable settings Work Package: source snapshot, SHA256 manifest и локальные
+check logs сохраняются в `.evidence/portable-settings/` (не в Git).
+Новые tests: tests/test_runtime_simple.py; Windows actual frozen paths:
+scripts/portable_smoke.py. По умолчанию compact GUI, --full-gui advanced.
+PENDING до отдельных live checks: пользовательский OpenWebUI, Windows GPU
+hardware и human gold. Публичная публикация разрешена пользователем; private
+release в публичном репозитории недоступен. Старые immutable assets не изменять.

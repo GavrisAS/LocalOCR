@@ -49,7 +49,7 @@ def selected_settings(
     from localocr.config import AppConfig
 
     config = load_config() if use_config else AppConfig()
-    config.provider = provider or config.provider
+    config.provider = provider or ("ollama" if ollama_url else config.provider)
     if device is not None and (
         device not in {"auto", "gpu", "cpu"} or config.provider != "embedded"
     ):
@@ -96,9 +96,9 @@ def doctor(
     ssl_verify: Annotated[bool | None, typer.Option("--ssl-verify/--no-ssl-verify")] = None,
     trust_env: Annotated[bool | None, typer.Option("--trust-env/--no-trust-env")] = None,
 ):
-    setup_logging()
     client = None
     try:
+        setup_logging()
         settings = selected_settings(
             provider,
             ollama_url,
@@ -118,7 +118,9 @@ def doctor(
         client = create_provider(settings, on_network_event=typer.echo if debug_http else None)
         typer.echo(client.doctor())
     except (ValueError, OSError) as error:
-        typer.echo(str(error), err=True)
+        from localocr.runtime import write_error
+
+        typer.echo(write_error(error) if isinstance(error, OSError) else str(error), err=True)
         raise typer.Exit(2) from error
     except OCRServerError as error:
         typer.echo(str(error), err=True)
@@ -154,8 +156,8 @@ def convert(
     timeout: float = 300,
     diagnostics: bool = False,
 ):
-    setup_logging()
     try:
+        setup_logging()
         results = run_convert(
             source,
             selected_settings(
@@ -196,7 +198,9 @@ def convert(
         if any(result.status in {"FAILED", "REVIEW"} for result in results):
             raise typer.Exit(1)
     except (ValueError, OSError) as error:
-        typer.echo(str(error), err=True)
+        from localocr.runtime import write_error
+
+        typer.echo(write_error(error) if isinstance(error, OSError) else str(error), err=True)
         raise typer.Exit(2) from error
     except OCRServerError as error:
         typer.echo(str(error), err=True)

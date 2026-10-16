@@ -137,7 +137,7 @@ def test_config_migration_and_plain_token(tmp_path, monkeypatch):
         json.dumps({"folder": "old", "ollama_url": "http://192.168.1.2:11434"})
     )
     old = load_config()
-    assert old.folder == "old" and old.provider == "ollama"
+    assert old.folder == "old" and old.provider == "openwebui"
     config = AppConfig(
         folder="new",
         provider="openwebui",

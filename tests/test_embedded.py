@@ -83,6 +83,10 @@ def test_owned_lifecycle_reuse_no_external(fake_engine, monkeypatch, server):
     monkeypatch.setattr(socket.socket, "connect", guarded)
     with EmbeddedOCRProvider(settings) as client:
         assert "CPU" in client.doctor()
+        from localocr.config import config_dir
+
+        assert client.lock_file is not None
+        assert client.lock_file.name == str(config_dir() / "embedded.lock")
         process = client.process
         assert process is not None
         for _ in range(3):

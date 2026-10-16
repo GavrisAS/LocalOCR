@@ -23,7 +23,7 @@ def test_gui_responsive_connection_cancel(server, tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     app = QApplication.instance() or QApplication([])
     url, state = server
-    save_config(AppConfig(str(tmp_path), url))
+    save_config(AppConfig(str(tmp_path), url, provider="ollama"))
     window = Window()
     window.show()
     assert window.url.text() == url
@@ -67,6 +67,7 @@ def test_gui_batch_progress_results(server, tmp_path, monkeypatch):
     window = Window()
     window.folder.setText(str(tmp_path))
     window.url.setText(server[0])
+    window.provider.setCurrentIndex(window.provider.findData("ollama"))
     window.launch()
     deadline = time.monotonic() + 5
     while window.worker is not None and time.monotonic() < deadline:

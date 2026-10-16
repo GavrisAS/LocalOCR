@@ -58,3 +58,11 @@ JSON tokens; boolean ssl_verify=True and trust_env=False persist independently.
 CLI supports --ssl-verify/--no-ssl-verify and --trust-env/--no-trust-env.
 Embedded has a dedicated Qt signal for actual selected runtime, mode, device,
 full offload evidence or CPU, and Auto fallback reasons; errors clear stale status.
+
+Portable settings and compact GUI: settings/logs/Embedded lock now share the
+executable directory (nested CLI included). Default GUI offers Server (OpenWebUI
+Ollama Proxy), strict F16 GPU and F16 CPU. Use --full-gui for advanced settings.
+Configure the server URL/model/token in config.json; OpenWebUI user defaults are
+ssl_verify=false and trust_env=false. Existing saved booleans are preserved.
+Move the complete application folder to a writable location; results remain beside
+source images. No runtime settings or credentials are shipped in the ZIP.

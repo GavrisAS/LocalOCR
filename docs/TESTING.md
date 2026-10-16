@@ -43,3 +43,10 @@ Windows frozen qualification processes both fixtures in one actual CLI folder ba
 checks a single shared engine startup, and verifies both workbooks against gold.
 Only ENGINE_STARTUP_TIMEOUT may trigger one build-time requalification; the first
 failed report is retained. A cell/type/shape mismatch fails immediately.
+
+Portable/simple GUI: tests/test_runtime_simple.py, test_gui_config.py,
+test_connection_options.py. Autouse ROOT_OVERRIDE изолирует весь runtime в tmp_path.
+Root tests моделируют frozen GUI/вложенный CLI и перемещение; это не проверка EXE.
+Windows build выполняет simple и --full-gui frozen smoke; реальные OpenWebUI,
+Windows GPU и human gold требуют отдельной проверки. Локальный Linux не заменяет
+Windows runner и F16 CPU qualification из existing release gates.

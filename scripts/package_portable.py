@@ -49,7 +49,11 @@ def package(root: Path, output: Path, tag: str, sha: str, evidence: Path):
     archive = output / f"LocalOCR-{tag}-portable-f16.zip"
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as bundle:
         for file in sorted(root.rglob("*")):
-            if file.is_file():
+            if file.is_file() and not (
+                file.name in {"config.json", "embedded.lock"}
+                or file.name.startswith("localocr.log")
+                or set(file.relative_to(root).parts) & {"diagnostics", "work", "cache", "results"}
+            ):
                 bundle.write(file, Path("LocalOCR") / file.relative_to(root))
     parts = split(archive, output)
     descriptor = {

@@ -187,6 +187,7 @@ def test_gui_failure_and_batch_preflight_trace(server, tmp_path, monkeypatch):
             folder=str(tmp_path),
             provider="openwebui",
             openwebui_url=server[0] + "/prefix",
+            openwebui_model="glm-ocr:latest",
             api_token="test-token",
             embedded_device="gpu",
         )
