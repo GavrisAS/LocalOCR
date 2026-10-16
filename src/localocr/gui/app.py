@@ -266,6 +266,8 @@ class Window(QMainWindow):
         if self.worker is not None:
             return
         try:
+            if not check and not self.folder.text().strip():
+                raise ValueError("Выберите папку с изображениями")
             settings = self.runtime_settings()
             save_config(self.current_config())
         except (OSError, ValueError) as error:
@@ -413,6 +415,18 @@ class SimpleWindow(Window):
         old.hide()
         self.setCentralWidget(central)
         self.resize(760, 480)
+        tab_order = [
+            self.folder,
+            self.browse,
+            *self.mode_buttons.values(),
+            self.check,
+            self.start,
+            self.stop,
+            self.status,
+            self.open,
+        ]
+        for before, after in zip(tab_order, tab_order[1:]):
+            QWidget.setTabOrder(before, after)
 
     def mode(self):
         return next(

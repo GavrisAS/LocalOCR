@@ -15,7 +15,7 @@ def test_roots(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert runtime.portable_root() == runtime.Path(runtime.__file__).resolve().parents[2]
     monkeypatch.setattr(sys, "frozen", True, raising=False)
-    for root in (tmp_path / "original", tmp_path / "moved"):
+    for root in (tmp_path / "original", tmp_path / "moved", tmp_path / "LocalOCR-CLI"):
         for exe in (root / "LocalOCR.exe", root / "LocalOCR-CLI/LocalOCR-CLI.exe"):
             monkeypatch.setattr(sys, "executable", str(exe))
             assert config_dir() == root
@@ -95,6 +95,9 @@ def test_simple_settings_and_controls():
     window.show()
     app.processEvents()
     assert len(window.findChildren(QRadioButton)) == 3
+    window.launch()
+    assert window.worker is None
+    assert "Выберите папку" in window.status.toPlainText()
     assert not window.web_url.isVisible()
     assert str(config_dir() / "config.json") in window.status.toPlainText()
     settings = window.runtime_settings()

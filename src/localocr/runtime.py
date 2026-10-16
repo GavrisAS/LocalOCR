@@ -12,7 +12,11 @@ def portable_root() -> Path:
         return ROOT_OVERRIDE
     if getattr(sys, "frozen", False):
         directory = Path(sys.executable).resolve().parent
-        return directory.parent if directory.name.casefold() == "localocr-cli" else directory
+        nested_cli = (
+            directory.name.casefold() == "localocr-cli"
+            and Path(sys.executable).name.casefold() == "localocr-cli.exe"
+        )
+        return directory.parent if nested_cli else directory
     return Path(__file__).resolve().parents[2]
 
 
