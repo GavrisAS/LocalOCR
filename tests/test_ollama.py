@@ -61,6 +61,28 @@ def test_http_errors(server, status):
     assert len(state["requests"]) == (2 if status == 500 else 1)
 
 
+def test_token_repeat_limit_is_classified_without_identical_provider_retry(server, caplog):
+    url, state = server
+    state["status"] = 500
+    state["body"] = {
+        "error": "prediction aborted, token repeat limit reached",
+        "ocr": "PRIVATE_OCR",
+    }
+    events = []
+    client = OllamaClient(Settings(url=url))
+    setattr(client, "on_network_event", events.append)
+    with (
+        caplog.at_level("INFO"),
+        pytest.raises(OCRServerError, match="TOKEN_REPEAT_LIMIT") as caught,
+    ):
+        client.recognize(b"image", single_table=True)
+    assert len(state["requests"]) == 1
+    assert caught.value.diagnostics["category"] == "TOKEN_REPEAT_LIMIT"
+    assert "TOKEN_REPEAT_LIMIT" in "\n".join(events)
+    assert "PRIVATE_OCR" not in caplog.text
+    assert "PRIVATE_OCR" not in "\n".join(events)
+
+
 def test_timeout_and_cancel(server):
     url, state = server
     state["delay"] = 2

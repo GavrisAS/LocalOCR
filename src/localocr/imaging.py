@@ -68,6 +68,36 @@ def centers(values: np.ndarray, merge_gap: int = 3) -> list[int]:
     return [center for center, _ in merged]
 
 
+def supported_outer_boundaries(
+    lines: np.ndarray, boundaries: list[int], perpendicular: list[int]
+) -> tuple[list[int], bool]:
+    length = lines.shape[1]
+    band = max(2, min(15, round(lines.shape[0] * 0.003)))
+    extents = []
+    for position in perpendicular:
+        pixels = np.flatnonzero(
+            np.any(lines[max(0, position - band) : position + band + 1], axis=0)
+        )
+        if len(pixels) >= length * 0.6:
+            extents.append((int(pixels[0]), int(pixels[-1])))
+    if len(extents) < 3:
+        return boundaries, False
+    tolerance = max(3, round(length * 0.003))
+    minimum_gap = max(8, float(np.median(np.diff(boundaries))) * 0.25)
+    result = list(boundaries)
+    for side in (0, 1):
+        positions = [extent[side] for extent in extents]
+        boundary = int(np.median(positions))
+        support = sum(abs(position - boundary) <= tolerance for position in positions)
+        if support / len(positions) < 0.75:
+            continue
+        gap = result[0] - boundary if side == 0 else boundary - result[-1]
+        if gap >= minimum_gap:
+            result.append(boundary)
+            result.sort()
+    return result, result != boundaries
+
+
 def detect_layout(image: Image.Image) -> list[Layout]:
     gray = cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2GRAY)
     binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
@@ -96,9 +126,21 @@ def detect_layout(image: Image.Image) -> list[Layout]:
         xs = centers(vertical_counts >= max(3, h * 0.25), max(3, round(w * 0.0015)))
         ys = centers(horizontal_counts >= max(3, w * 0.12), max(3, round(h * 0.0015)))
         if len(xs) >= 2 and len(ys) >= 2:
+            xs, open_vertical_edge = supported_outer_boundaries(
+                horizontal[y : y + h, x : x + w], xs, ys
+            )
+            ys, open_horizontal_edge = supported_outer_boundaries(
+                vertical[y : y + h, x : x + w].T, ys, xs
+            )
             x_support = sum(vertical_counts[value] >= h * 0.6 for value in xs) / len(xs)
             y_support = sum(horizontal_counts[value] >= w * 0.6 for value in ys) / len(ys)
-            confidence = "strong" if min(x_support, y_support) >= 0.6 else "partial"
+            confidence = (
+                "strong"
+                if min(x_support, y_support) >= 0.6
+                and not open_vertical_edge
+                and not open_horizontal_edge
+                else "partial"
+            )
             layouts.append(
                 Layout(
                     (x, y, x + w, y + h),

@@ -138,6 +138,7 @@ class OllamaClient:
             for attempt in range(self.settings.retries + 1):
                 self.check_cancel()
                 status_seen = None
+                server_error_category = None
                 try:
                     async with asyncio.timeout(max(0.01, deadline - time.monotonic())):
                         try:
@@ -192,10 +193,23 @@ class OllamaClient:
                                     fragment.extend(chunk[: 4096 - len(fragment)])
                                     if len(fragment) >= 4096:
                                         break
-                                emit(
-                                    self,
-                                    f"Ответ сервера (фрагмент): {fragment.decode('utf-8', errors='replace')}",
-                                )
+                                if (
+                                    "token repeat limit reached"
+                                    in fragment.decode("utf-8", errors="replace").lower()
+                                ):
+                                    server_error_category = "TOKEN_REPEAT_LIMIT"
+                                if method == "GET":
+                                    emit(
+                                        self,
+                                        "Ответ сервера (фрагмент): "
+                                        + fragment.decode("utf-8", errors="replace"),
+                                    )
+                                else:
+                                    emit(
+                                        self,
+                                        "Ответ сервера: BODY_OMITTED ; "
+                                        f"category={server_error_category or 'HTTP_ERROR'}",
+                                    )
                                 if 300 <= response.status_code < 400:
                                     detail = f"HTTP_REDIRECT Location={response.headers.get('location', '')} ; redirects запрещены"
                                     emit(self, detail)
@@ -234,6 +248,14 @@ class OllamaClient:
                         self,
                         f"FAIL / HTTP_{error.response.status_code} ; {exception_detail(error)}",
                     )
+                    if server_error_category == "TOKEN_REPEAT_LIMIT":
+                        raise OCRServerError(
+                            f"{self.server_name} HTTP {error.response.status_code} · TOKEN_REPEAT_LIMIT",
+                            {
+                                "http_status": error.response.status_code,
+                                "category": server_error_category,
+                            },
+                        ) from error
                     if error.response.status_code >= 500 and attempt < self.settings.retries:
                         await asyncio.sleep(0.2)
                         continue

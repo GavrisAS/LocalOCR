@@ -104,7 +104,9 @@ def test_display_limit_propagates_to_batch_review(server, tmp_path):
     assert result.status == "REVIEW"
     assert result.warnings == 1
     assert "DISPLAY_LIMIT" in result.message
-    report = json.loads(next((tmp_path / "results").glob("report-*.json")).read_text())
+    report = json.loads(
+        next((tmp_path / "results").glob("report-*.json")).read_text(encoding="utf-8")
+    )
     assert report["results"][0]["status"] == "REVIEW"
 
 
@@ -181,6 +183,35 @@ def test_multiple_tables():
     image.paste(synthetic(2, 2), (0, 0))
     image.paste(synthetic(2, 3), (0, 160))
     assert len(detect_layout(image)) == 2
+
+
+@pytest.mark.parametrize("edge", ["left", "right", "top", "bottom"])
+def test_open_outer_frame_preserves_geometrically_supported_last_cells(edge):
+    image = synthetic(5, 6, 60)
+    draw = ImageDraw.Draw(image)
+    boxes = {
+        "left": (8, 8, 12, 312),
+        "right": (358, 8, 362, 312),
+        "top": (8, 8, 372, 12),
+        "bottom": (8, 308, 372, 312),
+    }
+    draw.rectangle(boxes[edge], fill="white")
+    layout = detect_layout(image)[0]
+    assert (len(layout.ys) - 1, len(layout.xs) - 1) == (5, 6)
+    assert layout.confidence == "partial"
+
+
+def test_inconsistent_line_ends_do_not_create_a_column_boundary():
+    import numpy as np
+
+    from localocr.imaging import supported_outer_boundaries
+
+    lines = np.zeros((100, 400), dtype=np.uint8)
+    positions = [10, 30, 50, 70]
+    for position, end in zip(positions, [250, 300, 350, 399]):
+        lines[position, :end] = 255
+    boundaries = [0, 100, 200]
+    assert supported_outer_boundaries(lines, boundaries, positions) == (boundaries, False)
 
 
 def test_cli_batch_unicode_collisions_errors(server, tmp_path, monkeypatch):
