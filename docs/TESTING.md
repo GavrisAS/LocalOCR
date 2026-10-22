@@ -32,8 +32,9 @@ uv run python scripts/qualify_gpu.py --engine embedded/engines/cuda/llama-server
 ```
 
 This runs the same pinned F16 pair on CPU/GPU/Auto, synthetic 3×3 and 30×3 through
-the shared canonical validator and XLSX writer, checks source comments, shape and
-cell types, and records actual backend/device/offload, engine/model hashes, cold
+the shared canonical validator and XLSX writer, checks opt-in OCR observations,
+absence of XLSX comments, shape and cell types, and records actual
+backend/device/offload, engine/model hashes, cold
 model load and inference latency separately. It fails on synthetic gold mismatch.
 RTX A4000 is the target; Linux evidence does not qualify Windows CUDA/Vulkan.
 Windows CPU frozen qualification and reassembled Portable checks stay mandatory.

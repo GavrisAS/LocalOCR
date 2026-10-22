@@ -18,6 +18,7 @@ class Layout:
     xs: list[int]
     ys: list[int]
     confidence: str = "strong"
+    safe_rows: list[int] | None = None
 
 
 def load_image(path: Path) -> Image.Image:
@@ -147,9 +148,27 @@ def detect_layout(image: Image.Image) -> list[Layout]:
                     [x + value for value in xs],
                     [y + value for value in ys],
                     confidence,
+                    safe_row_boundaries(horizontal[y : y + h, x : x + w], xs, ys),
                 )
             )
     return sorted(layouts, key=lambda layout: (layout.region[1], layout.region[0]))
+
+
+def safe_row_boundaries(horizontal: np.ndarray, xs: list[int], ys: list[int]) -> list[int]:
+    band = max(2, min(15, round(horizontal.shape[0] * 0.003)))
+    safe = {0, len(ys) - 1}
+    for index, position in enumerate(ys):
+        line = np.any(horizontal[max(0, position - band) : position + band + 1], axis=0)
+        supported = True
+        for left, right in zip(xs, xs[1:]):
+            margin = max(2, min(10, round((right - left) * 0.03)))
+            segment = line[left + margin : max(left + margin + 1, right - margin)]
+            if not len(segment) or np.count_nonzero(segment) / len(segment) < 0.7:
+                supported = False
+                break
+        if supported:
+            safe.add(index)
+    return sorted(safe)
 
 
 def has_visible_text(image: Image.Image) -> bool:
@@ -172,16 +191,20 @@ def row_fragments(
     ranges = []
     start = 0
     rows = len(layout.ys) - 1
+    boundaries = sorted(
+        {0, rows, *(layout.safe_rows if layout.safe_rows is not None else range(rows + 1))}
+    )
     while start < rows:
-        end = start + 1
-        while (
-            end < rows
-            and end - start < max_rows
-            and layout.ys[end + 1] - layout.ys[start] <= max_height
-        ):
-            end += 1
+        remaining = [boundary for boundary in boundaries if boundary > start]
+        fitting = [
+            boundary
+            for boundary in remaining
+            if boundary - start <= max_rows and layout.ys[boundary] - layout.ys[start] <= max_height
+        ]
+        end = fitting[-1] if fitting else remaining[0]
         ranges.append((start, end))
         if end == rows:
             break
-        start = max(start + 1, end - overlap_rows)
+        context = [boundary for boundary in boundaries if start < boundary <= end - overlap_rows]
+        start = context[-1] if context else end
     return ranges

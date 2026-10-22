@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from openpyxl import load_workbook
-from qualify_embedded import synthetic
+from qualify_embedded import observation_texts, synthetic
 
 from localocr.embedded import EmbeddedOCRProvider, EmbeddedSettings
 from localocr.excel import write_workbook
@@ -62,21 +62,21 @@ def qualify(engine: Path, model: Path, mmproj: Path, output: Path):
                     image = output.parent / f"synthetic-{mode}-{rows}.png"
                     gold = synthetic(image, rows)
                     started = time.monotonic()
-                    document = recognize_document(load_image(image), client, None)
+                    diagnostics = output.parent / "diagnostics" / image.stem
+                    document = recognize_document(load_image(image), client, diagnostics)
                     seconds = time.monotonic() - started
                     target = image.with_suffix(".xlsx")
                     write_workbook(document, target, overwrite=True)
                     book = load_workbook(target)
                     sheet = book["Таблица 1"]
-                    observed = [
-                        [
-                            sheet.cell(r + 1, c + 1).comment.text
-                            if sheet.cell(r + 1, c + 1).comment
-                            else None
-                            for c in range(3)
-                        ]
-                        for r in range(rows)
-                    ]
+                    observed = observation_texts(diagnostics / "observations.json", rows, 3)
+                    if any(
+                        cell.comment is not None
+                        for worksheet in book.worksheets
+                        for row in worksheet.iter_rows()
+                        for cell in row
+                    ):
+                        raise ValueError("New GPU qualification XLSX contains comments")
                     types = [
                         [sheet.cell(r + 1, c + 1).data_type for c in range(3)] for r in range(rows)
                     ]

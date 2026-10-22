@@ -214,6 +214,19 @@ def test_inconsistent_line_ends_do_not_create_a_column_boundary():
     assert supported_outer_boundaries(lines, boundaries, positions) == (boundaries, False)
 
 
+def test_fragmentation_keeps_a_geometrically_merged_row_group_together():
+    image = synthetic(10, 3, 50)
+    draw = ImageDraw.Draw(image)
+    for boundary in (2, 3, 4):
+        draw.rectangle((12, 9 + boundary * 50, 58, 12 + boundary * 50), fill="white")
+    layout = detect_layout(image)[0]
+    assert layout.safe_rows is not None
+    assert not set(layout.safe_rows) & {2, 3, 4}
+    parts = row_fragments(layout, max_height=120, max_rows=3)
+    assert (1, 5) in parts
+    assert all(start in layout.safe_rows and end in layout.safe_rows for start, end in parts)
+
+
 def test_cli_batch_unicode_collisions_errors(server, tmp_path, monkeypatch):
     url, state = server
     folder = tmp_path / "Русская папка"

@@ -229,6 +229,7 @@ def recognize_document(
                 "xs": layout.xs,
                 "ys": layout.ys,
                 "confidence": layout.confidence,
+                "safe_row_boundaries": layout.safe_rows,
             }
             for layout in layouts
         ],
@@ -521,13 +522,26 @@ def recognize_document(
                         )
                         if end - start <= 3 or depth >= 6:
                             raise error
-                        middle = (start + end) // 2
-                        half = (end - start) // 2
-                        context = min(2, max(1, half - 1))
-                        left_end = min(end, middle + context)
-                        right_start = max(start, middle - context)
-                        if left_end >= end or right_start <= start:
+                        interior = [
+                            boundary
+                            for boundary in (
+                                layout.safe_rows
+                                if layout.safe_rows is not None
+                                else range(start + 1, end)
+                            )
+                            if start < boundary < end
+                        ]
+                        if not interior:
                             raise error
+                        middle = min(
+                            interior, key=lambda boundary: abs(boundary - (start + end) / 2)
+                        )
+                        left_end = min(
+                            (value for value in interior if value > middle), default=middle
+                        )
+                        right_start = max(
+                            (value for value in interior if value < middle), default=middle
+                        )
                         return read_range(start, left_end, depth + 1) + read_range(
                             right_start, end, depth + 1
                         )
