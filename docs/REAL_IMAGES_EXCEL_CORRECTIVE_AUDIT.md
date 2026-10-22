@@ -66,7 +66,7 @@
 
 ## E. Release и приватность
 
-Исходная ревизия — `3c93b4db4e39aa5c20b0648e1feb083044ad1e88`, tag `v0.24`. Старый tag и assets не менялись. Новый commit/tag/release этой версии пока не опубликован; `v0.25` не зарезервирован. Текущие workflow можно проверить по [CI](https://github.com/GavrisAS/LocalOCR/actions/workflows/ci.yml) и [Windows candidate release](https://github.com/GavrisAS/LocalOCR/actions/workflows/release-windows.yml); конкретного run или release URL пока нет.
+Исходная ревизия — `3c93b4db4e39aa5c20b0648e1feb083044ad1e88`, tag `v0.24`. Исправления внесены в implementation commit `3a6c3a9dcae1cba76775bf50d03665ac74e5b65b`. До push удалённая `main` проверена и оставалась на v0.24; этот commit и данное обновление отчёта будут отправлены одним push. При отсутствии постороннего push workflow должен зарезервировать следующий minor `v0.25`; tag будет указывать на итоговый commit этого push. Старый tag и assets не менялись. Конкретного CI run или Release URL пока нет; workflow-ссылки: [CI](https://github.com/GavrisAS/LocalOCR/actions/workflows/ci.yml) и [Windows candidate release](https://github.com/GavrisAS/LocalOCR/actions/workflows/release-windows.yml).
 
 В корневой `.gitignore` добавлено `/data/`. Проверено: `git check-ignore -v data/00070.jpg` и `git check-ignore -v data/localocr-corrective-rerun/private-audit.json` указывают на это правило; `git ls-files -- data/` пуст. Git index не содержал файлов из `data/`. В коммит, CI artifacts, handoff и release ZIP не включать изображения, отчёты, XLSX, OCR-тексты или private audit.
 
