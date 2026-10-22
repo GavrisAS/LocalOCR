@@ -2,7 +2,7 @@
 
 ## A. Вердикт
 
-**PARTIAL.** Excel gates и локальная синтетическая регрессия пройдены. Все 17 файлов из `./data/` инвентаризированы, но живой OCR-перезапуск не выполнен: локальный Ollama на `127.0.0.1:11434` недоступен, а другой выбранный провайдер не подтверждён. Точность GLM-OCR на этих изображениях, Windows CI и frozen smoke остаются **PENDING**.
+**PARTIAL.** Excel gates и локальная синтетическая регрессия пройдены. Все 17 файлов из `./data/` инвентаризированы, но живой OCR-перезапуск не выполнен: локальный Ollama на `127.0.0.1:11434` недоступен, а другой выбранный провайдер не подтверждён. Linux/Windows checks прошли, но Windows frozen CLI smoke в run v0.25 обнаружил несогласованность smoke-входа с защитой пустого изображения; вход исправлен, повторная Windows-сборка и candidate release v0.26 **PENDING**.
 
 Улучшение OCR-пути не меняет автоматом статусы реальных документов. Без повторного ответа модели ни один прежний `FAILED` не считается восстановленным и ни один `SUCCESS` не подтверждён заново.
 
@@ -61,12 +61,13 @@
 - `UV_CACHE_DIR=/tmp/localocr-uv-cache uv run ruff format --check .` — PASS.
 - `UV_CACHE_DIR=/tmp/localocr-uv-cache uv run ty check` — PASS.
 - `UV_CACHE_DIR=/tmp/localocr-uv-cache uv run pytest` — PASS, 279 тестов, Python 3.14.8. Для тестовых HTTP-серверов разрешён loopback bind вне sandbox.
-- Linux/Windows GitHub CI и frozen GUI/CLI smoke: **PENDING** до push; реальная сборка Windows в этой Linux-среде не запускалась.
+- GitHub run v0.25: Linux и Windows lint/type/pytest checks прошли; Windows frozen GUI smoke прошёл, но CLI smoke завершился до открытия XLSX. Smoke создавал полностью белое изображение, которое новая защита намеренно отклоняет без таблицы. Сценарий исправлен на видимый синтетический текст; локально связанные no-grid/retry тесты — PASS (2). Windows повторная frozen-сборка для v0.26 — **PENDING**. Run: https://github.com/GavrisAS/LocalOCR/actions/runs/39738035675.
+- Windows hardware/portable qualification и проверка на реальном пользовательском ПК не выполнялись; Linux hardware qualification также **PENDING**.
 - Реальный GLM-OCR на 17 изображениях, Embedded F16 и квалификация Linux/Windows GPU: **PENDING**. Проверка `http://127.0.0.1:11434/api/tags` вернула connection refused; ответы модели не получены.
 
 ## E. Release и приватность
 
-Исходная ревизия — `3c93b4db4e39aa5c20b0648e1feb083044ad1e88`, tag `v0.24`. Исправления внесены в implementation commit `3a6c3a9dcae1cba76775bf50d03665ac74e5b65b`. До push удалённая `main` проверена и оставалась на v0.24; этот commit и данное обновление отчёта будут отправлены одним push. При отсутствии постороннего push workflow должен зарезервировать следующий minor `v0.25`; tag будет указывать на итоговый commit этого push. Старый tag и assets не менялись. Конкретного CI run или Release URL пока нет; workflow-ссылки: [CI](https://github.com/GavrisAS/LocalOCR/actions/workflows/ci.yml) и [Windows candidate release](https://github.com/GavrisAS/LocalOCR/actions/workflows/release-windows.yml).
+Исходная ревизия — `3c93b4db4e39aa5c20b0648e1feb083044ad1e88`, tag `v0.24`. Основные исправления внесены в `3a6c3a9dcae1cba76775bf50d03665ac74e5b65b`, первый push с audit зафиксирован в `291be0ba6a48c1dc1bc00769ed4816d0d79d0213`. Он зарезервировал immutable tag `v0.25` на этот SHA. Run v0.25 прошёл Linux/Windows checks, но Windows frozen CLI smoke упал на белом тестовом изображении; candidate release и assets не публиковались, `v0.24` и его assets не менялись. Исправленный smoke входит в следующий push; при подтверждённом tag reservation v0.25 этот push должен резервировать `v0.26`, его CI и релиз пока **PENDING**. Предыдущий run: https://github.com/GavrisAS/LocalOCR/actions/runs/39738035675; workflow-ссылки: [CI](https://github.com/GavrisAS/LocalOCR/actions/workflows/ci.yml) и [Windows candidate release](https://github.com/GavrisAS/LocalOCR/actions/workflows/release-windows.yml).
 
 В корневой `.gitignore` добавлено `/data/`. Проверено: `git check-ignore -v data/00070.jpg` и `git check-ignore -v data/localocr-corrective-rerun/private-audit.json` указывают на это правило; `git ls-files -- data/` пуст. Git index не содержал файлов из `data/`. В коммит, CI artifacts, handoff и release ZIP не включать изображения, отчёты, XLSX, OCR-тексты или private audit.
 

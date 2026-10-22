@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from openpyxl import load_workbook
-from PIL import Image
+from PIL import Image, ImageDraw
 
 
 def isolated_environment():
@@ -75,7 +75,9 @@ def main():
         with tempfile.TemporaryDirectory(prefix="LocalOCR smoke ") as name:
             folder = Path(name)
             image = folder / "Таблица.png"
-            Image.new("RGB", (200, 100), "white").save(image)
+            sample = Image.new("RGB", (200, 100), "white")
+            ImageDraw.Draw(sample).text((10, 10), "table rows", fill="black")
+            sample.save(image)
             command = [
                 str(exe),
                 "convert",
@@ -91,10 +93,15 @@ def main():
                 timeout=60,
                 env=isolated_environment(),
             )
-            # Unruled input must honestly be REVIEW, exit 1.
+            # Unruled but visibly structured input must honestly be REVIEW, exit 1.
             if result.returncode != 1:
                 raise RuntimeError(f"Frozen conversion failed: {result.stdout} {result.stderr}")
-            book = load_workbook(folder / "results" / "Таблица.xlsx")
+            output = folder / "results" / "Таблица.xlsx"
+            if not output.is_file():
+                raise RuntimeError(
+                    f"Frozen conversion did not publish its REVIEW workbook: {result.stdout} {result.stderr}"
+                )
+            book = load_workbook(output)
             assert book.worksheets[0]["A2"].value == "0012"
             assert book.worksheets[0]["B2"].data_type == "s"
             assert "Проверка" in book.sheetnames
