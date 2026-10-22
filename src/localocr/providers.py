@@ -70,6 +70,10 @@ class OpenWebUIOllamaProxyProvider(OllamaClient):
         settings.validate()
         self.settings = settings
         self.cancel = cancel or Event()
+        self.last_diagnostic: dict = {}
+
+    def diagnostic_endpoint(self, endpoint: str) -> str:
+        return self.settings.url.rstrip("/") + "/ollama" + endpoint
 
     async def route(self):
         return (
@@ -120,10 +124,32 @@ class OpenWebUIChatProvider(OpenWebUIOllamaProxyProvider):
         return f"Подключено · {self.settings.model}{suffix}"
 
     def recognize(self, image: bytes, *, single_table: bool = False) -> str:
+        endpoint = "/api/chat/completions"
+        generation: dict[str, object] = {
+            "temperature": 0,
+            "max_tokens": self.settings.num_predict,
+        }
+        if single_table:
+            generation["stop"] = ["</table>"]
+        self.last_diagnostic = {
+            "server": self.server_name,
+            "endpoint": self.settings.url.rstrip("/") + endpoint,
+            "model": self.settings.model,
+            "generation": generation,
+        }
         data = self.request(
             "POST",
-            "/api/chat/completions",
+            endpoint,
             chat_payload(self.settings, image, single_table=single_table),
+        )
+        choices = data.get("choices")
+        choice = choices[0] if isinstance(choices, list) and choices else {}
+        content = choice.get("message", {}).get("content") if isinstance(choice, dict) else None
+        self.last_diagnostic.update(
+            {
+                "finish_reason": choice.get("finish_reason") if isinstance(choice, dict) else None,
+                "response_length": len(content) if isinstance(content, str) else None,
+            }
         )
         return chat_text(data, single_table=single_table)
 

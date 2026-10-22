@@ -57,13 +57,13 @@ def test_gui_responsive_connection_cancel(server, tmp_path, monkeypatch):
     window.close()
 
 
-def test_gui_batch_progress_results(server, tmp_path, monkeypatch):
+def test_gui_batch_progress_results(server, tmp_path, monkeypatch, visible_text):
     from PIL import Image
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "config"))
     app = QApplication.instance() or QApplication([])
-    Image.new("RGB", (100, 100), "white").save(tmp_path / "input.png")
+    visible_text(Image.new("RGB", (100, 100), "white")).save(tmp_path / "input.png")
     window = Window()
     window.folder.setText(str(tmp_path))
     window.url.setText(server[0])

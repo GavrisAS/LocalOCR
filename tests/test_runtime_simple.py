@@ -159,7 +159,7 @@ def test_main_smoke_routes(full, monkeypatch):
     assert len(created) == 1
 
 
-def test_simple_proxy_worker_lifecycle(server, tmp_path):
+def test_simple_proxy_worker_lifecycle(server, tmp_path, visible_text):
     import time
 
     from PIL import Image
@@ -175,7 +175,7 @@ def test_simple_proxy_worker_lifecycle(server, tmp_path):
             api_token="test-only",
         )
     )
-    Image.new("RGB", (60, 60), "white").save(tmp_path / "input.png")
+    visible_text(Image.new("RGB", (60, 60), "white")).save(tmp_path / "input.png")
     window = SimpleWindow()
 
     def wait():

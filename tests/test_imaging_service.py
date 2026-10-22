@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from PIL import Image, ImageDraw
 from typer.testing import CliRunner
@@ -5,8 +7,14 @@ from typer.testing import CliRunner
 from localocr.cli import app
 from localocr.domain import Cell, StructureError, Table
 from localocr.imaging import Layout, detect_layout, load_image, row_fragments
-from localocr.ollama import Settings
-from localocr.service import assemble_fragments, convert, output_names
+from localocr.ollama import OCRServerError, Settings
+from localocr.service import (
+    assemble_fragments,
+    convert,
+    output_names,
+    recognize_document,
+    stitch_unstructured,
+)
 
 
 def synthetic(rows, columns, scale=40):
@@ -57,10 +65,88 @@ def test_fragment_geometry_not_text():
     assert table.rows == 4 and len(table.cells) == 8
     conflict = part(2, 4)
     conflict.cells[0].text = "conflict"
-    with pytest.raises(StructureError):
-        assemble_fragments([(0, 3, part(0, 3)), (2, 4, conflict)], layout)
+    reviewed = assemble_fragments([(0, 3, part(0, 3)), (2, 4, conflict)], layout)
+    assert any(cell.warnings for cell in reviewed.cells)
     with pytest.raises(StructureError):
         assemble_fragments([(0, 4, part(0, 3))], layout)
+
+
+def test_unstructured_overlap_stitch_is_conservative():
+    first = Table([Cell(row, 0, text) for row, text in enumerate(["A", "B", "C"])], 3, 1)
+    second = Table([Cell(row, 0, text) for row, text in enumerate(["B", "C", "D"])], 3, 1)
+    result = stitch_unstructured([(0, 500, first), (400, 900, second)])
+    assert [result.grid()[row, 0].text for row in range(4)] == ["A", "B", "C", "D"]
+    assert result.issues[0].code == "GEOMETRY_UNKNOWN"
+
+    conflict = Table([Cell(row, 0, text) for row, text in enumerate(["B", "X", "D"])], 3, 1)
+    with pytest.raises(StructureError, match="однозначно сопоставить"):
+        stitch_unstructured([(0, 500, first), (400, 900, conflict)])
+
+
+def test_no_grid_truncation_retries_smaller_and_records_private_diagnostics(tmp_path):
+    class Client:
+        server_name = "synthetic"
+        settings = type("SettingsView", (), {"model": "synthetic", "num_predict": 1000})()
+        on_network_event = None
+        on_runtime_status = None
+
+        def __init__(self):
+            self.calls = 0
+            self.last_diagnostic = {}
+
+        def check_cancel(self):
+            return None
+
+        def doctor(self):
+            return "ready"
+
+        def close(self):
+            return None
+
+        def recognize(self, image, *, single_table=False):
+            self.calls += 1
+            if self.calls == 1:
+                self.last_diagnostic = {
+                    "endpoint": "http://127.0.0.1:11434/api/generate",
+                    "done": True,
+                    "done_reason": "length",
+                    "response_length": 14,
+                }
+                raise OCRServerError("truncated", self.last_diagnostic)
+            rows = (
+                [("A", "1"), ("B", "2"), ("C", "3")]
+                if self.calls == 2
+                else [("B", "2"), ("C", "3"), ("D", "4")]
+            )
+            self.last_diagnostic = {
+                "endpoint": "http://127.0.0.1:11434/api/generate",
+                "done": True,
+                "done_reason": "stop",
+            }
+            return (
+                "<table>"
+                + "".join(f"<tr><td>{left}</td><td>{right}</td></tr>" for left, right in rows)
+                + "</table>"
+            )
+
+    client = Client()
+    image = Image.new("RGB", (800, 900), "white")
+    ImageDraw.Draw(image).text((10, 10), "table rows", fill="black")
+    document = recognize_document(image, client, tmp_path)
+    assert client.calls == 3
+    assert document.tables[0].rows == 4
+    assert document.tables[0].issues[0].code == "GEOMETRY_UNKNOWN"
+    report = json.loads((tmp_path / "run.json").read_text(encoding="utf-8"))
+    assert report["status"] == "REVIEW"
+    assert report["requests"][0]["provider"]["done_reason"] == "length"
+    assert report["requests"][1]["route"] == "adaptive-page-fragment"
+    sidecar = json.loads((tmp_path / "observations.json").read_text(encoding="utf-8"))
+    assert sidecar["tables"][0]["cells"][-2]["text"] == "D"
+
+    blank_client = Client()
+    with pytest.raises(StructureError, match="видимого текста"):
+        recognize_document(Image.new("RGB", (800, 900), "white"), blank_client, None)
+    assert blank_client.calls == 0
 
 
 def test_multiple_tables():
@@ -110,11 +196,11 @@ def test_cli_batch_unicode_collisions_errors(server, tmp_path, monkeypatch):
     assert runner.invoke(app, ["convert", str(folder), "--ollama-url", "ftp://bad"]).exit_code == 2
 
 
-def test_recursive_and_no_grid_review(server, tmp_path):
+def test_recursive_and_no_grid_review(server, tmp_path, visible_text):
     url, _ = server
     folder = tmp_path / "sub"
     folder.mkdir()
-    Image.new("RGB", (100, 100), "white").save(folder / "x.webp")
+    visible_text(Image.new("RGB", (100, 100), "white")).save(folder / "x.webp")
     results = convert(tmp_path, Settings(url=url), recursive=True)
     assert results[0].status == "REVIEW"
     assert results[0].warnings == 1

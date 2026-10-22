@@ -12,6 +12,7 @@ dist/
 *.zip
 outputs/
 results/
+/data/
 *.jpg
 *.jpeg
 *.png

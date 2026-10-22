@@ -225,8 +225,9 @@ def test_technical_success_with_wrong_ocr(server, tmp_path):
     for cell in gold["tables"][0]["cells"]:
         cell.update(text="independent synthetic gold", spans=[1, 1], type="s")
     summary = compare(actual, gold)
-    assert summary["counts"]["text_mismatches"] == 4
-    assert summary["counts"]["unflagged_mismatches"] == 4
+    assert summary["status"] == "RAW_TEXT_UNAVAILABLE"
+    assert summary["counts"]["original_text_unavailable"] == 4
+    assert summary["counts"].get("text_mismatches", 0) == 0
 
 
 @pytest.mark.parametrize("network_error", [False, True])

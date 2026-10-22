@@ -53,7 +53,7 @@ def test_config_migration_and_gui(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "verify,trust", [(True, False), (False, False), (True, True), (False, True)]
 )
-def test_client_options_doctor_convert(api, verify, trust, tmp_path, monkeypatch):
+def test_client_options_doctor_convert(api, verify, trust, tmp_path, monkeypatch, visible_text):
     calls, events, urls = [], [], []
     original = httpx.AsyncClient
 
@@ -64,7 +64,7 @@ def test_client_options_doctor_convert(api, verify, trust, tmp_path, monkeypatch
                 200,
                 json={"models": [{"name": "glm-ocr:latest"}], "data": [{"id": "glm-ocr:latest"}]},
             )
-        text = "<table><tr><td>1</td></tr></table>"
+        text = "<table><tr><td>1</td><td>2</td></tr><tr><td>3</td><td>4</td></tr></table>"
         return httpx.Response(
             200,
             json={
@@ -84,7 +84,7 @@ def test_client_options_doctor_convert(api, verify, trust, tmp_path, monkeypatch
     )
     client = create_provider(settings, on_network_event=events.append)
     client.doctor()
-    Image.new("RGB", (100, 100), "white").save(tmp_path / "input.png")
+    visible_text(Image.new("RGB", (100, 100), "white")).save(tmp_path / "input.png")
     convert(tmp_path, settings, on_network_event=events.append)
     assert len(calls) >= 3
     assert all(

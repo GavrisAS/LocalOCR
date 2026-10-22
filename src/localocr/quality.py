@@ -10,10 +10,29 @@ from openpyxl import load_workbook
 from localocr.domain import Cell, StructureError, Table
 
 
-def export(path: Path):
+def _diagnostic_text(path: Path | None) -> dict[tuple[int, int, int], str]:
+    if path is None:
+        return {}
+    sidecar = path / "observations.json" if path.is_dir() else path
+    if not sidecar.is_file():
+        return {}
+    data = json.loads(sidecar.read_text(encoding="utf-8"))
+    if data.get("schema_version") != 1 or not isinstance(data.get("tables"), list):
+        raise ValueError("Unsupported OCR observations sidecar")
+    result = {}
+    for table_index, table in enumerate(data["tables"]):
+        for cell in table.get("cells", []):
+            if not isinstance(cell.get("text"), str):
+                continue
+            result[table_index, cell["row"] + 1, cell["column"] + 1] = cell["text"]
+    return result
+
+
+def export(path: Path, diagnostics: Path | None = None):
     book = load_workbook(path)
+    observations = _diagnostic_text(diagnostics)
     tables = []
-    for sheet in book:
+    for table_index, sheet in enumerate(book):
         if sheet.title == "Проверка":
             continue
         covered = set()
@@ -42,7 +61,10 @@ def export(path: Path):
                         value=cell.value,
                         type=cell.data_type,
                         number_format=cell.number_format,
-                        text=cell.comment.text if cell.comment else None,
+                        text=observations.get(
+                            (table_index, cell.row, cell.column),
+                            cell.comment.text if cell.comment else None,
+                        ),
                         review=cell.fill.fgColor.rgb == "00FFF2CC",
                     )
                 )
@@ -95,6 +117,9 @@ def compare(actual, gold):
         return dict(status="QUALITY_PENDING", reason="Incomplete/invalid human gold geometry")
     stats = Counter()
     types = {}
+    raw_text_unavailable = sum(
+        cell.get("text") is None for table in actual["tables"] for cell in table["cells"]
+    )
     for index in range(max(len(actual["tables"]), len(gold["tables"]))):
         a = actual["tables"][index] if index < len(actual["tables"]) else dict(cells=[])
         g = gold["tables"][index] if index < len(gold["tables"]) else dict(cells=[])
@@ -115,17 +140,19 @@ def compare(actual, gold):
             text = observed["text"]
             if text is None:
                 stats["original_text_unavailable"] += 1
-                text = "" if observed["value"] is None else str(observed["value"])
+                continue
             if text != expected["text"]:
                 stats["text_mismatches"] += 1
                 bucket["text_mismatches"] += 1
                 if not observed["review"]:
                     stats["unflagged_mismatches"] += 1
     return dict(
-        status="QUALIFIED_COMPARISON",
+        status="RAW_TEXT_UNAVAILABLE" if raw_text_unavailable else "QUALIFIED_COMPARISON",
+        comparison_status="QUALIFIED_COMPARISON",
         counts=dict(stats),
         by_type=types,
         review_count=actual["review_count"],
+        raw_text_unavailable=raw_text_unavailable,
     )
 
 
@@ -134,9 +161,10 @@ def main():
     parser.add_argument("--xlsx", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--gold", type=Path)
+    parser.add_argument("--diagnostics", type=Path)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    actual = export(args.xlsx)
+    actual = export(args.xlsx, args.diagnostics)
     (args.output / "actual.json").write_text(
         json.dumps(actual, ensure_ascii=False, indent=2), encoding="utf-8"
     )

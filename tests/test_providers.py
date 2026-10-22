@@ -51,6 +51,9 @@ def test_web_payload(api, cls, path, monkeypatch):
     )
     assert isinstance(client, cls)
     assert client.recognize(b"image") == "<table>x</table>"
+    assert client.last_diagnostic["endpoint"] == f"https://corporate.example:444{path}"
+    assert client.last_diagnostic["response_length"] == len("<table>x</table>")
+    assert "fixture-token" not in str(client.last_diagnostic)
     request = requests[-1]
     assert request.url.path == path
     assert request.headers["Authorization"] == "Bearer fixture-token"
@@ -201,13 +204,16 @@ def test_web_inflight_cancel_and_retry(api, monkeypatch):
     assert len(requests) == 2 and requests[0].content == requests[1].content
 
 
-def test_shared_pipeline_fidelity_across_server_adapters(tmp_path, monkeypatch):
+def test_shared_pipeline_fidelity_across_server_adapters(tmp_path, monkeypatch, visible_text):
     from PIL import Image
 
     from localocr.quality import export
     from localocr.service import convert
 
-    text = "<table><tr><td>0012</td><td>1.20</td><td>=SUM(A1)</td></tr></table>"
+    text = (
+        "<table><tr><td>0012</td><td>1.20</td><td>=SUM(A1)</td></tr>"
+        "<tr><td>A</td><td>B</td><td>C</td></tr></table>"
+    )
     original = httpx.AsyncClient
 
     def handler(request):
@@ -225,7 +231,7 @@ def test_shared_pipeline_fidelity_across_server_adapters(tmp_path, monkeypatch):
         httpx, "AsyncClient", lambda **kw: original(transport=httpx.MockTransport(handler), **kw)
     )
     image = tmp_path / "image.png"
-    Image.new("RGB", (100, 100), "white").save(image)
+    visible_text(Image.new("RGB", (100, 100), "white")).save(image)
     actual = []
     for index, settings in enumerate(
         [Settings(), OpenWebUISettings(), OpenWebUISettings(api="chat")]

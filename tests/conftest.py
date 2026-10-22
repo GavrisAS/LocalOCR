@@ -5,8 +5,18 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 import pytest
+from PIL import Image, ImageDraw
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+@pytest.fixture
+def visible_text():
+    def mark(image: Image.Image) -> Image.Image:
+        ImageDraw.Draw(image).text((2, 2), "A", fill="black")
+        return image
+
+    return mark
 
 
 @pytest.fixture

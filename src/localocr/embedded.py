@@ -76,6 +76,7 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
         self.reader = None
         self.lock_file = None
         self.cancel = cancel or Event()
+        self.last_diagnostic: dict = {}
         self.settings = OpenWebUISettings(
             model="localocr-" + secrets.token_hex(16),
             api_token="localocr-" + secrets.token_urlsafe(32),
@@ -345,14 +346,35 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
         self.doctor()
         started = time.monotonic()
         try:
-            return chat_text(
-                self.request(
-                    "POST",
-                    "/v1/chat/completions",
-                    chat_payload(self.settings, image, single_table=single_table),
-                ),
-                single_table=single_table,
+            endpoint = "/v1/chat/completions"
+            self.last_diagnostic = {
+                "server": self.server_name,
+                "endpoint": self.settings.url.rstrip("/") + endpoint,
+                "model": f"Embedded {self.embedded.precision.upper()}",
+                "generation": {
+                    "temperature": 0,
+                    "max_tokens": self.settings.num_predict,
+                    "context_size": self.embedded.ctx_size,
+                    "stop": ["</table>"] if single_table else [],
+                },
+            }
+            data = self.request(
+                "POST",
+                endpoint,
+                chat_payload(self.settings, image, single_table=single_table),
             )
+            choices = data.get("choices")
+            choice = choices[0] if isinstance(choices, list) and choices else {}
+            content = choice.get("message", {}).get("content") if isinstance(choice, dict) else None
+            self.last_diagnostic.update(
+                {
+                    "finish_reason": choice.get("finish_reason")
+                    if isinstance(choice, dict)
+                    else None,
+                    "response_length": len(content) if isinstance(content, str) else None,
+                }
+            )
+            return chat_text(data, single_table=single_table)
         except BaseException as error:
             callback = getattr(self, "on_runtime_status", None)
             if callback:

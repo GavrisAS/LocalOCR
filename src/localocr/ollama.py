@@ -16,7 +16,9 @@ from localocr.network import category, emit, exception_detail, payload_summary, 
 
 
 class OCRServerError(RuntimeError):
-    pass
+    def __init__(self, message: str, diagnostics: dict | None = None):
+        super().__init__(message)
+        self.diagnostics = diagnostics or {}
 
 
 class Cancelled(RuntimeError):
@@ -92,6 +94,7 @@ class OllamaClient:
         settings.validate()
         self.settings = settings
         self.cancel = cancel or Event()
+        self.last_diagnostic: dict = {}
 
     def check_cancel(self):
         if self.cancel.is_set():
@@ -103,6 +106,9 @@ class OllamaClient:
 
     def normalize_result(self, result):
         return result
+
+    def diagnostic_endpoint(self, endpoint: str) -> str:
+        return self.settings.url.rstrip("/") + endpoint
 
     def close(self):
         """No persistent connection or subprocess in Direct Ollama."""
@@ -289,28 +295,46 @@ class OllamaClient:
         return f"Подключено · {self.settings.model}"
 
     def recognize(self, image: bytes, *, single_table: bool = False) -> str:
+        endpoint = "/api/generate"
+        generation: dict[str, object] = {
+            "temperature": 0,
+            "seed": 0,
+            "num_ctx": 32768,
+            "num_predict": self.settings.num_predict,
+        }
+        if single_table:
+            generation["stop"] = ["</table>"]
+        self.last_diagnostic = {
+            "server": self.server_name,
+            "endpoint": self.diagnostic_endpoint(endpoint),
+            "model": self.settings.model,
+            "generation": generation,
+        }
         data = self.request(
             "POST",
-            "/api/generate",
+            endpoint,
             {
                 "model": self.settings.model,
                 "prompt": "Table Recognition:",
                 "images": [base64.b64encode(image).decode("ascii")],
                 "stream": False,
-                "options": {
-                    "temperature": 0,
-                    "seed": 0,
-                    "num_ctx": 32768,
-                    "num_predict": self.settings.num_predict,
-                    **({"stop": ["</table>"]} if single_table else {}),
-                },
+                "options": generation,
             },
         )
         text = data.get("response")
+        self.last_diagnostic.update(
+            {
+                "done": data.get("done"),
+                "done_reason": data.get("done_reason"),
+                "response_length": len(text) if isinstance(text, str) else None,
+            }
+        )
         if not isinstance(text, str) or not text.strip():
-            raise OCRServerError("EMPTY_RESPONSE: Пустой OCR-ответ")
+            raise OCRServerError("EMPTY_RESPONSE: Пустой OCR-ответ", self.last_diagnostic)
         if data.get("done") is not True or data.get("done_reason") == "length":
-            raise OCRServerError("Усечённый ответ OCR; требуется меньший фрагмент")
+            raise OCRServerError(
+                "Усечённый ответ OCR; требуется меньший фрагмент", self.last_diagnostic
+            )
         # Ollama omits the matched stop sequence from response. Restore only that
         # delimiter after a confirmed stop, never cell values or incomplete rows.
         if single_table and data.get("done_reason") == "stop" and "</table>" not in text.lower():

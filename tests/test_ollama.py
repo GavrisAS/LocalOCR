@@ -16,6 +16,9 @@ def test_payload_and_proxy(server, monkeypatch):
     client = OllamaClient(Settings(url=url))
     assert "Подключено" in client.doctor()
     assert "<table>" in client.recognize(b"image")
+    assert client.last_diagnostic["endpoint"].endswith("/api/generate")
+    assert client.last_diagnostic["done_reason"] == "stop"
+    assert client.last_diagnostic["response_length"] == len(state["text"])
     path, payload = state["requests"][-1]
     assert path == "/api/generate"
     assert payload["prompt"] == "Table Recognition:" and payload["stream"] is False
@@ -117,6 +120,7 @@ def test_single_table_stop_not_fake_repair(server):
     state["body"]["done_reason"] = "length"
     with pytest.raises(OCRServerError):
         client.recognize(b"x", single_table=True)
+    assert client.last_diagnostic["done_reason"] == "length"
     state["body"]["done_reason"] = "stop"
     from localocr.domain import StructureError
     from localocr.tables import parse_response
