@@ -75,6 +75,30 @@ def frozen_batch_metadata(stdout: str, names: list[str]):
     }
 
 
+def observation_texts(path: Path, rows: int, columns: int) -> list[list[str | None]]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    tables = data.get("tables")
+    if data.get("schema_version") != 1 or not isinstance(tables, list) or len(tables) != 1:
+        raise ValueError("Expected one schema-v1 OCR observations table")
+    table = tables[0]
+    if (table.get("rows"), table.get("columns")) != (rows, columns):
+        raise ValueError("OCR observations dimensions differ from synthetic source")
+    result = [[None for _ in range(columns)] for _ in range(rows)]
+    for cell in table.get("cells", []):
+        row, column = cell.get("row"), cell.get("column")
+        if (
+            not isinstance(row, int)
+            or not isinstance(column, int)
+            or not 0 <= row < rows
+            or not 0 <= column < columns
+            or result[row][column] is not None
+            or not isinstance(cell.get("text"), str)
+        ):
+            raise ValueError("Invalid or duplicate OCR observation coordinate")
+        result[row][column] = cell["text"]
+    return result
+
+
 def qualify_once(root: Path, output: Path, sha: str, isolated: bool, relocated=False):
     evidence = {
         "status": "FAIL",
@@ -144,6 +168,7 @@ def qualify_once(root: Path, output: Path, sha: str, isolated: bool, relocated=F
                         "--device",
                         "cpu",
                         "--debug-http",
+                        "--diagnostics",
                     ],
                     text=True,
                     encoding="utf-8",
@@ -178,15 +203,13 @@ def qualify_once(root: Path, output: Path, sha: str, isolated: bool, relocated=F
                         )
                     book = load_workbook(xlsx)
                     sheet = book["Таблица 1"]
-                    observed = [
-                        [
-                            sheet.cell(r + 1, c + 1).comment.text
-                            if sheet.cell(r + 1, c + 1).comment
-                            else None
-                            for c in range(3)
-                        ]
-                        for r in range(rows)
-                    ]
+                    if any(
+                        cell.comment is not None
+                        for worksheet in book.worksheets
+                        for row in worksheet.iter_rows()
+                        for cell in row
+                    ):
+                        raise ValueError("New frozen XLSX unexpectedly contains comments")
                     shape = [sheet.max_row, sheet.max_column]
                     values = [
                         [sheet.cell(r + 1, c + 1).value for c in range(3)] for r in range(rows)
@@ -196,6 +219,9 @@ def qualify_once(root: Path, output: Path, sha: str, isolated: bool, relocated=F
                     ]
                     expected_values = [[row[0], int(row[1]), float(row[2])] for row in expected]
                     book.close()
+                    observed = observation_texts(
+                        moved / "diagnostics" / image.stem / "observations.json", rows, 3
+                    )
                     mismatches = sum(
                         a != b for er, ar in zip(expected, observed) for a, b in zip(er, ar)
                     )

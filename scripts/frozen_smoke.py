@@ -102,9 +102,16 @@ def main():
                     f"Frozen conversion did not publish its REVIEW workbook: {result.stdout} {result.stderr}"
                 )
             book = load_workbook(output)
-            assert book.worksheets[0]["A2"].value == "0012"
-            assert book.worksheets[0]["B2"].data_type == "s"
+            sheet = book.worksheets[0]
+            assert sheet["A2"].value == "0012"
+            assert sheet["B2"].data_type == "s"
             assert "Проверка" in book.sheetnames
+            assert all(
+                cell.comment is None
+                for worksheet in book.worksheets
+                for row in worksheet.iter_rows()
+                for cell in row
+            )
             book.close()
             print("Frozen CLI, version, Unicode paths and XLSX: PASS")
     finally:

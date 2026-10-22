@@ -168,6 +168,38 @@ def test_frozen_batch_timings_separate_startup_and_each_image(monkeypatch):
     assert result["cases"]["large.png"]["ocr_request_seconds"] == [3.0, 4.0]
 
 
+def test_embedded_qualification_reads_raw_observations_sidecar(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    module = load("qualify_embedded")
+    sidecar = tmp_path / "observations.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "tables": [
+                    {
+                        "rows": 2,
+                        "columns": 2,
+                        "cells": [
+                            {"row": 0, "column": 0, "text": "0012"},
+                            {"row": 0, "column": 1, "text": "5,50"},
+                            {"row": 1, "column": 0, "text": ""},
+                            {"row": 1, "column": 1, "text": "R2"},
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert module.observation_texts(sidecar, 2, 2) == [
+        ["0012", "5,50"],
+        ["", "R2"],
+    ]
+    with pytest.raises(ValueError, match="dimensions"):
+        module.observation_texts(sidecar, 3, 2)
+
+
 @pytest.mark.parametrize(
     "trace",
     [
