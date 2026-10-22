@@ -155,9 +155,9 @@ def stitch_unstructured(parts: list[tuple[int, int, Table]]) -> Table:
             for count in range(1, min(len(previous_signatures), len(next_signatures)) + 1)
             if previous_signatures[-count:] == next_signatures[:count]
         ]
-        if not overlaps:
+        if len(overlaps) != 1 or overlaps[0] == len(next_signatures):
             raise StructureError("Не удалось однозначно сопоставить строки перекрытия фрагментов")
-        overlap = max(overlaps)
+        overlap = overlaps[0]
         offset = rows - overlap
         existing_grid = existing.grid()
         for cell in part.cells:
@@ -242,7 +242,7 @@ def recognize_document(
         diagnostics.mkdir(parents=True, exist_ok=True)
         trace["status"] = status
         trace["request_count"] = len(requests)
-        trace["retry_count"] = max(0, trace["request_count"] - 1)
+        trace["retry_count"] = sum(bool(record.get("retry")) for record in requests)
         trace["duration_seconds"] = round(time.monotonic() - started, 3)
         if error is not None:
             trace["failure"] = {
@@ -292,7 +292,7 @@ def recognize_document(
                 encoding="utf-8",
             )
 
-    def recognize(crop, single_table=True, region=None, route="whole-table"):
+    def recognize(crop, single_table=True, region=None, route="whole-table", retry=False):
         nonlocal sequence
         client.check_cancel()
         sequence += 1
@@ -300,6 +300,7 @@ def recognize_document(
         record: dict[str, object] = {
             "request": sequence,
             "route": route,
+            "retry": retry,
             "region": region,
             "single_table": single_table,
             "started": time.time(),
@@ -343,7 +344,7 @@ def recognize_document(
             max_height = max(600, min(1800, 10_000_000 // max(1, image.width)))
             overlap = max(80, min(240, max_height // 8))
 
-            def read_page(top, bottom, depth=0, budget=None, force_split=False):
+            def read_page(top, bottom, depth=0, budget=None, force_split=False, retry=False):
                 if budget is None:
                     budget = [48]
                 if budget[0] <= 0:
@@ -358,8 +359,8 @@ def recognize_document(
                     right_start = max(top, middle - context)
                     if left_end >= bottom or right_start <= top:
                         raise error
-                    return read_page(top, left_end, depth + 1, budget) + read_page(
-                        right_start, bottom, depth + 1, budget
+                    return read_page(top, left_end, depth + 1, budget, retry=True) + read_page(
+                        right_start, bottom, depth + 1, budget, retry=True
                     )
 
                 if force_split and bottom - top > max(240, overlap * 2):
@@ -371,6 +372,7 @@ def recognize_document(
                         single_table=False,
                         region=(0, top, image.width, bottom),
                         route="adaptive-page-fragment",
+                        retry=retry,
                     )
                     if len(document.tables) != 1:
                         raise StructureError("Внутри фрагмента найдено несколько таблиц")
@@ -452,11 +454,13 @@ def recognize_document(
                 min(image.width, right + 3),
                 min(image.height, bottom + 3),
             )
+            table_attempted = False
             try:
                 max_height = max(600, min(1800, 10_000_000 // max(1, right - x)))
                 if bottom - y > max_height:
                     raise StructureError("Размер таблицы требует масштабной фрагментации")
                 active_stage = "whole-table OCR"
+                table_attempted = True
                 document = recognize(
                     image.crop(table_region),
                     region=table_region,
@@ -480,7 +484,7 @@ def recognize_document(
                 parts: list[tuple[int, int, Table]] = []
                 budget = [48]
 
-                def read_range(start, end, depth=0):
+                def read_range(start, end, depth=0, retry=False):
                     box = (
                         max(0, x - 3),
                         max(0, layout.ys[start] - 2),
@@ -495,6 +499,7 @@ def recognize_document(
                             image.crop(box),
                             region=box,
                             route="row-fragment",
+                            retry=retry or depth > 0 or table_attempted,
                         )
                         if len(doc.tables) != 1:
                             raise StructureError("Неоднозначный OCR-фрагмент")
@@ -542,8 +547,8 @@ def recognize_document(
                     if len(spans) != 1:
                         raise StructureError("Конфликт объединений в перекрытии фрагментов")
                     rowspan, _ = next(iter(spans))
-                    first = read_range(row, row + rowspan)
-                    second = read_range(row, row + rowspan)
+                    first = read_range(row, row + rowspan, retry=True)
+                    second = read_range(row, row + rowspan, retry=True)
                     if len(first) != 1 or len(second) != 1:
                         raise StructureError("Неоднозначная локальная повторная проверка")
                     candidates = []
@@ -661,11 +666,11 @@ def convert(
                         )
                     image = load_image(path)
                     document = recognize_document(image, client, diag, source_name=path.name)
+                    write_workbook(document, target, overwrite, cancel)
                     warnings = sum(
                         len(table.issues) + sum(len(c.warnings) for c in table.cells)
                         for table in document.tables
                     )
-                    write_workbook(document, target, overwrite, cancel)
                     review_codes = list(
                         dict.fromkeys(
                             [issue.code for table in document.tables for issue in table.issues]

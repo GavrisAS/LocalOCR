@@ -16,7 +16,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from PIL import ImageFont
 
-from localocr.domain import TableDocument
+from localocr.domain import TableDocument, ValidationIssue
 from localocr.ollama import Cancelled
 
 MIN_COLUMN_WIDTH = 8.0
@@ -40,24 +40,55 @@ def value(text: str):
     return text
 
 
-@lru_cache(maxsize=16)
-def _font(size: int):
+@lru_cache(maxsize=1)
+def _font_paths() -> tuple[Path, Path] | None:
+    windows = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
+    candidates = [
+        (windows / "arial.ttf", windows / "arialbd.ttf"),
+        (
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+        ),
+        (
+            Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"),
+            Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"),
+        ),
+    ]
+    return next((pair for pair in candidates if all(path.is_file() for path in pair)), None)
+
+
+@lru_cache(maxsize=64)
+def _font(size: int, bold: bool = False):
+    pixels = max(1, round(size * 96 / 72))
+    paths = _font_paths()
+    if paths is not None:
+        try:
+            return ImageFont.truetype(str(paths[int(bold)]), size=pixels)
+        except OSError, ImportError:
+            pass
     try:
-        return ImageFont.load_default(size=size)
-    except OSError, TypeError:
+        return ImageFont.load_default(size=pixels)
+    except OSError, TypeError, ImportError:
         return None
 
 
 def _text_width(text: str, size: int, bold: bool = False) -> float:
-    font = _font(size)
+    font = _font(size, bold)
     if font is None:
         width = sum(1.0 if ord(char) < 128 else 1.8 for char in text)
-        return width * size * (0.56 if bold else 0.52)
+        return width * size * 96 / 72 * (0.56 if bold else 0.52)
     try:
-        return float(font.getlength(text)) * (1.08 if bold else 1.0)
+        fallback = font.getname()[0] == "Aileron"
+        if fallback:
+            width = sum(
+                float(font.getlength(char)) if ord(char) < 128 else size * 96 / 72 * 0.9
+                for char in text
+            )
+            return width * (1.08 if bold else 1.0)
+        return float(font.getlength(text))
     except AttributeError, OSError, ValueError:
         width = sum(1.0 if ord(char) < 128 else 1.8 for char in text)
-        return width * size * (0.56 if bold else 0.52)
+        return width * size * 96 / 72 * (0.56 if bold else 0.52)
 
 
 def _display_text(cell) -> str:
@@ -105,6 +136,24 @@ def _wrapped_lines(text: str, width: float, size: int, bold: bool) -> int:
     return max(1, count)
 
 
+def _rotated_extent(text: str, size: int, bold: bool, rotation: int) -> tuple[float, float]:
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    line_height = (size * 1.25 + 2.0) * 96 / 72
+    if rotation == 255:
+        characters = "".join(lines)
+        return (
+            max((_text_width(char, size, bold) for char in characters), default=0.0),
+            max(1, len(characters)) * line_height,
+        )
+    width = max((_text_width(line, size, bold) for line in lines), default=0.0)
+    height = len(lines) * line_height
+    angle = math.radians(rotation if rotation <= 90 else 180 - rotation)
+    return (
+        width * abs(math.cos(angle)) + height * math.sin(angle),
+        width * math.sin(angle) + height * abs(math.cos(angle)),
+    )
+
+
 def _autofit_sheet(sheet) -> list[tuple[int, int, str]]:
     columns = sheet.max_column
     rows = sheet.max_row
@@ -113,6 +162,7 @@ def _autofit_sheet(sheet) -> list[tuple[int, int, str]]:
     for area in sheet.merged_cells.ranges:
         min_col, min_row, max_col, max_row = area.bounds
         merged[min_row, min_col] = (max_row - min_row + 1, max_col - min_col + 1)
+    digit_width = max(1.0, _text_width("0", FONT_SIZE))
     for row in sheet.iter_rows():
         for cell in row:
             if cell.value is None:
@@ -124,31 +174,16 @@ def _autofit_sheet(sheet) -> list[tuple[int, int, str]]:
             size = max(8, min(36, round(cell.font.sz or FONT_SIZE)))
             bold = bool(cell.font.bold)
             rotation = cell.alignment.textRotation
-            display_text = text.replace("\r\n", "\n").replace("\r", "\n")
-            if rotation == 255:
-                desired = max((_text_width(char, size, bold) for char in display_text), default=0)
-            elif rotation:
-                desired = max((_text_width(char, size, bold) for char in display_text), default=0)
-            else:
-                desired = max(
-                    (_text_width(line, size, bold) for line in display_text.split("\n")),
-                    default=0,
-                )
-            width = max(MIN_COLUMN_WIDTH, min(MAX_COLUMN_WIDTH, desired / 7 + 2.5))
+            desired, _ = _rotated_extent(text, size, bold, rotation)
+            width = max(MIN_COLUMN_WIDTH, min(MAX_COLUMN_WIDTH, desired / digit_width + 2.5))
             widths[cell.column - 1] = max(widths[cell.column - 1], width)
     for (row_number, column_number), (row_span, column_span) in merged.items():
         cell = sheet.cell(row_number, column_number)
         text = _display_text(cell)
         size = max(8, min(36, round(cell.font.sz or FONT_SIZE)))
         bold = bool(cell.font.bold)
-        desired = (
-            max(
-                (_text_width(line, size, bold) for line in text.splitlines()),
-                default=0,
-            )
-            / 7
-            + 2.5
-        )
+        extent, _ = _rotated_extent(text, size, bold, cell.alignment.textRotation)
+        desired = extent / digit_width + 2.5
         available = sum(widths[column_number - 1 : column_number + column_span - 1])
         available += max(0, column_span - 1) * 0.7
         extra = min(max(0.0, desired - available), MAX_COLUMN_WIDTH * column_span - available)
@@ -156,8 +191,9 @@ def _autofit_sheet(sheet) -> list[tuple[int, int, str]]:
             per_column = extra / column_span
             for index in range(column_number - 1, column_number + column_span - 1):
                 widths[index] = min(MAX_COLUMN_WIDTH, widths[index] + per_column)
+    widths = [math.ceil(width * 10) / 10 for width in widths]
     for index, width in enumerate(widths, 1):
-        sheet.column_dimensions[get_column_letter(index)].width = round(width, 1)
+        sheet.column_dimensions[get_column_letter(index)].width = width
     heights = [15.0] * rows
     overflow = []
     for row in sheet.iter_rows():
@@ -169,16 +205,15 @@ def _autofit_sheet(sheet) -> list[tuple[int, int, str]]:
             bold = bool(cell.font.bold)
             width = sum(widths[cell.column - 1 : cell.column + column_span - 1])
             width += max(0, column_span - 1) * 0.7
-            capacity = max(1.0, (width - 2.5) * 7)
+            capacity = max(1.0, (width - 2.5) * digit_width)
             text = _display_text(cell)
             rotation = cell.alignment.textRotation
-            if rotation == 255:
-                line_count = max(1, len(text))
-            elif rotation:
-                line_count = max(1, round(_text_width(text, size, bold) / max(1, capacity)))
+            if rotation:
+                _, pixel_height = _rotated_extent(text, size, bold, rotation)
+                required = 3.0 + pixel_height * 72 / 96
             else:
                 line_count = _wrapped_lines(text, capacity, size, bold)
-            required = 3.0 + line_count * (size * 1.25 + 2.0)
+                required = 3.0 + line_count * (size * 1.25 + 2.0)
             available = sum(heights[cell.row - 1 : cell.row + row_span - 1])
             if required > MAX_ROW_HEIGHT * row_span:
                 overflow.append(
@@ -186,9 +221,11 @@ def _autofit_sheet(sheet) -> list[tuple[int, int, str]]:
                 )
             desired = min(required, MAX_ROW_HEIGHT * row_span)
             if desired > available:
-                extra = (desired - available) / row_span
-                for index in range(cell.row - 1, cell.row + row_span - 1):
-                    heights[index] = min(MAX_ROW_HEIGHT, heights[index] + extra)
+                indices = range(cell.row - 1, cell.row + row_span - 1)
+                remaining = sum(MAX_ROW_HEIGHT - heights[index] for index in indices)
+                extra = desired - available
+                for index in indices:
+                    heights[index] += extra * (MAX_ROW_HEIGHT - heights[index]) / remaining
     for index, height in enumerate(heights, 1):
         sheet.row_dimensions[index].height = round(height, 1)
     return overflow
@@ -200,6 +237,11 @@ def write_workbook(
     document.validate()
     book = Workbook()
     book.remove(book.active)
+    font = _font(FONT_SIZE)
+    font_name = font.getname()[0] if font is not None else "Arial"
+    if font_name == "Aileron":
+        font_name = "Arial"
+    book._named_styles["Normal"].font = Font(name=font_name, sz=FONT_SIZE)
     review = []
     border = Border(*([Side(style="thin", color="808080")] * 4))
     for index, table in enumerate(document.tables, 1):
@@ -218,7 +260,11 @@ def write_workbook(
                 target.number_format = "0." + "0" * decimals
             if isinstance(target.value, str):
                 target.data_type = "s"
-            target.font = Font(bold=cell.is_header)
+            target.font = Font(
+                name=font_name,
+                sz=FONT_SIZE,
+                bold=cell.is_header,
+            )
             target.alignment = Alignment(vertical="center", wrap_text=True)
             target.border = border
             if cell.warnings:
@@ -234,9 +280,10 @@ def write_workbook(
         for row in sheet:
             for target in row:
                 target.border = border
-        review.extend(
-            (index, row, column, message) for row, column, message in _autofit_sheet(sheet)
-        )
+        for row, column, message in _autofit_sheet(sheet):
+            issue = ValidationIssue("DISPLAY_LIMIT", message, row, column)
+            if issue not in table.issues:
+                table.issues.append(issue)
         grid = table.grid()
         headers = 0
         for row in range(table.rows):
@@ -258,10 +305,11 @@ def write_workbook(
                 if isinstance(target.value, str):
                     target.data_type = "s"
         for cell in sheet[1]:
-            cell.font = Font(bold=True)
+            cell.font = Font(name=font_name, sz=FONT_SIZE, bold=True)
             cell.alignment = Alignment(vertical="center", wrap_text=True)
         for row in sheet.iter_rows(min_row=2):
             for cell in row:
+                cell.font = Font(name=font_name, sz=FONT_SIZE)
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
         _autofit_sheet(sheet)
     path.parent.mkdir(parents=True, exist_ok=True)

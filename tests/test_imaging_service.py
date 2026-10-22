@@ -83,6 +83,31 @@ def test_unstructured_overlap_stitch_is_conservative():
         stitch_unstructured([(0, 500, first), (400, 900, conflict)])
 
 
+@pytest.mark.parametrize("second_rows", [["B", "B", "C"], ["B", "B"]])
+def test_unstructured_repeated_rows_do_not_choose_an_ambiguous_overlap(second_rows):
+    first = Table([Cell(row, 0, text) for row, text in enumerate(["A", "B", "B"])], 3, 1)
+    second = Table(
+        [Cell(row, 0, text) for row, text in enumerate(second_rows)], len(second_rows), 1
+    )
+    with pytest.raises(StructureError, match="однозначно сопоставить"):
+        stitch_unstructured([(0, 500, first), (400, 900, second)])
+
+
+def test_display_limit_propagates_to_batch_review(server, tmp_path):
+    url, state = server
+    state["text"] = (
+        "<table><tr><td>" + "x" * 4000 + "</td><td>A</td></tr><tr><td>B</td><td>C</td></tr></table>"
+    )
+    path = tmp_path / "overflow.png"
+    synthetic(2, 2).save(path)
+    result = convert(path, Settings(url=url))[0]
+    assert result.status == "REVIEW"
+    assert result.warnings == 1
+    assert "DISPLAY_LIMIT" in result.message
+    report = json.loads(next((tmp_path / "results").glob("report-*.json")).read_text())
+    assert report["results"][0]["status"] == "REVIEW"
+
+
 def test_no_grid_truncation_retries_smaller_and_records_private_diagnostics(tmp_path):
     class Client:
         server_name = "synthetic"
@@ -138,6 +163,8 @@ def test_no_grid_truncation_retries_smaller_and_records_private_diagnostics(tmp_
     assert document.tables[0].issues[0].code == "GEOMETRY_UNKNOWN"
     report = json.loads((tmp_path / "run.json").read_text(encoding="utf-8"))
     assert report["status"] == "REVIEW"
+    assert report["request_count"] == 3
+    assert report["retry_count"] == 2
     assert report["requests"][0]["provider"]["done_reason"] == "length"
     assert report["requests"][1]["route"] == "adaptive-page-fragment"
     sidecar = json.loads((tmp_path / "observations.json").read_text(encoding="utf-8"))
@@ -232,9 +259,12 @@ def test_long_table_recovery(server, tmp_path):
     from unittest.mock import patch
 
     with patch.object(OllamaClient, "recognize", recognize):
-        results = convert(path, Settings(url=url))
+        results = convert(path, Settings(url=url), diagnostics=tmp_path / "diagnostics")
     assert results[0].status == "SUCCESS"
     assert results[0].shapes == [(50, 2)]
+    trace = json.loads((tmp_path / "diagnostics/long/run.json").read_text(encoding="utf-8"))
+    assert trace["request_count"] > 1
+    assert trace["retry_count"] == 0
     assert original is not None
 
 

@@ -7,7 +7,7 @@ from openpyxl.comments import Comment
 from openpyxl.styles import Alignment
 
 from localocr.domain import Cell, StructureError, Table, TableDocument, ValidationIssue
-from localocr.excel import _autofit_sheet, value, write_workbook
+from localocr.excel import _autofit_sheet, _text_width, value, write_workbook
 from localocr.ollama import Cancelled
 from localocr.quality import compare, export
 from localocr.tables import parse_response
@@ -49,6 +49,7 @@ def test_roundtrip(tmp_path):
     assert sheet["B3"].value == "=1+1" and sheet["B3"].data_type == "s"
     assert sheet["C3"].value is None
     assert sheet["A1"].font.bold and sheet["A1"].alignment.wrap_text
+    assert sheet["A1"].font.name == book._named_styles["Normal"].font.name
     assert sheet["A3"].border.left.style == "thin"
     assert all(cell.comment is None for row in sheet for cell in row)
     assert sheet.freeze_panes == "A3"
@@ -203,6 +204,43 @@ def test_rotated_header_uses_vertical_height():
     _autofit_sheet(sheet)
     assert sheet.column_dimensions["A"].width < 20
     assert sheet.row_dimensions[1].height > 100
+    book.close()
+
+
+def test_ninety_degree_header_measures_rotated_text_height():
+    book = Workbook()
+    sheet = book.active
+    sheet["A1"] = "Вертикальная подпись"
+    sheet["A1"].alignment = Alignment(textRotation=90, wrap_text=True)
+    _autofit_sheet(sheet)
+    assert sheet.column_dimensions["A"].width < 20
+    assert sheet.row_dimensions[1].height > 70
+    book.close()
+
+
+def test_font_metrics_support_cyrillic_or_use_conservative_fallback(monkeypatch):
+    from PIL import ImageFont
+
+    from localocr import excel
+
+    monkeypatch.setattr(excel, "_font", lambda *args: ImageFont.load_default(size=15))
+    assert _text_width("ЖШЩ", 11) > _text_width("111", 11)
+    assert _text_width("Заголовок", 22) > _text_width("Заголовок", 11)
+    assert _text_width("Заголовок", 11, bold=True) > _text_width("Заголовок", 11)
+
+
+def test_rowspan_allocates_height_to_rows_with_available_space():
+    book = Workbook()
+    sheet = book.active
+    sheet["A1"] = "x" * 4000
+    sheet["B1"] = "\n".join(["заголовок"] * 11)
+    sheet.merge_cells("B1:B2")
+    sheet["A1"].alignment = Alignment(wrap_text=True)
+    sheet["B1"].alignment = Alignment(wrap_text=True)
+    _autofit_sheet(sheet)
+    assert sheet.row_dimensions[1].height == 150
+    assert sheet.row_dimensions[2].height > 25
+    assert sum(sheet.row_dimensions[index].height for index in (1, 2)) >= 176
     book.close()
 
 
