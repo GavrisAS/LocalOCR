@@ -17,7 +17,9 @@ GUI/CLI не содержат таблиц или логики OCR. Один ser
 сертификаты HTTPS проверяются с исходным hostname.
 
 Сервис не угадывает расположение missing cells. Только явно представленные
-пустые td допустимы. REVIEW сохраняет оригинальные значения, FAILED — без XLSX.
+пустые td допустимы. REVIEW хранит непроверенные наблюдения; PARTIAL сохраняет
+применимую часть и unresolved с координатами; FAILED — без XLSX. Геометрия, OCR и
+provenance разделены, правила описаны в [RECONSTRUCTION.md](RECONSTRUCTION.md).
 
 ## Embedded device selection and HTTP events
 

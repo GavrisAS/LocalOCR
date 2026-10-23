@@ -7,9 +7,11 @@ from localocr.domain import Cell, StructureError, Table, TableDocument
 
 
 class TableParser(HTMLParser):
-    def __init__(self):
+    def __init__(self, *, strict=True):
         super().__init__(convert_charrefs=True)
         self.tables: list[Table] = []
+        self.raw_tables: list[list[list[Cell]]] = []
+        self.strict = strict
         self.rows: list[list[Cell]] | None = None
         self.row: list[Cell] | None = None
         self.cell: Cell | None = None
@@ -73,7 +75,9 @@ class TableParser(HTMLParser):
         elif tag == "table":
             if self.rows is None or self.row is not None or self.cell is not None:
                 raise StructureError("Незакрытая таблица")
-            self.tables.append(place_rows(self.rows))
+            self.raw_tables.append(self.rows)
+            if self.strict:
+                self.tables.append(place_rows(self.rows))
             self.rows = None
 
 
@@ -135,3 +139,20 @@ def parse_response(text: str) -> TableDocument:
         document = TableDocument([place_rows(rows)])
     document.validate()
     return document
+
+
+def observe_rows(text: str) -> list[list[Cell]]:
+    """Closed HTML rows, with no inferred positions and no rectangular repair."""
+    if len(text) > 4_000_000:
+        raise StructureError("Ответ OCR превышает ограничение")
+    parser = TableParser(strict=False)
+    parser.feed(text)
+    parser.close()
+    if (
+        parser.rows is not None
+        or parser.row is not None
+        or parser.cell is not None
+        or len(parser.raw_tables) != 1
+    ):
+        raise StructureError("Неоднозначные или незакрытые наблюдения строк")
+    return parser.raw_tables[0]

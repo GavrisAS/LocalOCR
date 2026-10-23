@@ -36,6 +36,8 @@ class EmbeddedSettings:
     startup_timeout: float = 300
     num_predict: int = 16000
     ctx_size: int = 32768
+    max_calls: int = 24
+    max_image_seconds: float = 600
 
     def paths(self) -> tuple[Path, Path, Path]:
         root = portable_root() / "embedded"
@@ -55,6 +57,8 @@ class EmbeddedSettings:
             raise ValueError("Недопустимый timeout Embedded")
         if not 256 <= self.num_predict <= 32768 or not 2048 <= self.ctx_size <= 131072:
             raise ValueError("Недопустимые параметры Embedded")
+        if not 1 <= self.max_calls <= 96 or not 1 <= self.max_image_seconds <= 7200:
+            raise ValueError("Недопустимый бюджет изображения")
         for path in self.paths()[1:]:
             if not path.is_file() or path.stat().st_size == 0:
                 raise ValueError(f"Компонент Embedded не установлен: {path}")
@@ -84,6 +88,8 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
             num_predict=settings.num_predict,
             retries=1,
             api="chat",
+            max_calls=settings.max_calls,
+            max_image_seconds=settings.max_image_seconds,
         )
 
     def doctor(self):

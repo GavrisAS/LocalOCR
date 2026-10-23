@@ -32,12 +32,20 @@ class Settings:
     timeout: float = 300
     num_predict: int = 16000
     retries: int = 1
+    num_ctx: int = 32768
+    table_stop: bool = True
+    max_calls: int = 24
+    max_image_seconds: float = 180
 
     def validate(self):
         if not 1 <= self.timeout <= 7200 or not 256 <= self.num_predict <= 32768:
             raise ValueError("Недопустимый timeout или num_predict")
         if self.retries not in range(3) or not self.model.strip():
             raise ValueError("Недопустимые параметры OCR")
+        if self.num_ctx not in {32768, 65536} or type(self.table_stop) is not bool:
+            raise ValueError("Недопустимые num_ctx/table_stop")
+        if not 1 <= self.max_calls <= 96 or not 1 <= self.max_image_seconds <= 7200:
+            raise ValueError("Недопустимый бюджет изображения")
         validate_url(self.url)
 
 
@@ -89,6 +97,8 @@ async def pinned_url(url: str) -> tuple[str, str, str]:
 
 class OllamaClient:
     server_name = "Ollama"
+    supports_text_recognition = True
+    request_budget_remaining: int
 
     def __init__(self, settings: Settings, cancel: Event | None = None):
         settings.validate()
@@ -128,7 +138,12 @@ class OllamaClient:
             if isinstance(error, ValueError):
                 raise
             raise OCRServerError(detail) from error
+        is_ocr = isinstance(payload, dict) and bool(
+            payload.get("images") or payload.get("messages")
+        )
         deadline = time.monotonic() + self.settings.timeout
+        if is_ocr:
+            deadline = min(deadline, getattr(self, "image_deadline", deadline))
         timeout = httpx.Timeout(self.settings.timeout, connect=5, pool=5)
         verify = getattr(self.settings, "ssl_verify", True)
         trust_env = getattr(self.settings, "trust_env", False)
@@ -137,6 +152,10 @@ class OllamaClient:
         ) as client:
             for attempt in range(self.settings.retries + 1):
                 self.check_cancel()
+                if is_ocr and hasattr(self, "request_budget_remaining"):
+                    if self.request_budget_remaining <= 0:
+                        raise OCRServerError("IMAGE_REQUEST_BUDGET_EXHAUSTED")
+                    self.request_budget_remaining -= 1
                 status_seen = None
                 server_error_category = None
                 try:
@@ -175,6 +194,8 @@ class OllamaClient:
                             f"HTTP → {request.method} {request.url} ; {payload_summary(payload)}",
                         )
                         started = time.monotonic()
+                        if is_ocr:
+                            self.http_ocr_calls = getattr(self, "http_ocr_calls", 0) + 1
                         response = await client.send(request, stream=True)
                         status_seen = response.status_code
                         network_stream = response.extensions.get("network_stream")
@@ -313,37 +334,75 @@ class OllamaClient:
                 f"MODEL_NOT_FOUND/NOT_VISIBLE · HTTP API доступен, модель {self.settings.model} не видна",
             )
             raise OCRServerError(f"Модель {self.settings.model} не установлена на сервере Ollama")
+        selected = next(
+            model
+            for model in models
+            if isinstance(model, dict) and model.get("name") == self.settings.model
+        )
+        self.model_identity = {
+            "backend": self.server_name,
+            "endpoint": self.diagnostic_endpoint("/api/generate"),
+            "tag": self.settings.model,
+            "digest": selected.get("digest"),
+            "details": selected.get("details"),
+            "verified": bool(selected.get("digest")),
+        }
         emit(self, f"doctor PASS · модель {self.settings.model} видна; OCR ещё не выполнялся")
         return f"Подключено · {self.settings.model}"
 
     def recognize(self, image: bytes, *, single_table: bool = False) -> str:
+        return self._recognize_task(image, "Table Recognition:", single_table=single_table)
+
+    def recognize_text(self, image: bytes) -> str:
+        return self._recognize_task(image, "Text Recognition:")
+
+    def _recognize_task(self, image: bytes, prompt: str, *, single_table=False) -> str:
         endpoint = "/api/generate"
         generation: dict[str, object] = {
             "temperature": 0,
             "seed": 0,
-            "num_ctx": 32768,
+            "num_ctx": getattr(self.settings, "num_ctx", 32768),
             "num_predict": self.settings.num_predict,
         }
-        if single_table:
+        use_stop = single_table and getattr(self.settings, "table_stop", True)
+        if use_stop:
             generation["stop"] = ["</table>"]
         self.last_diagnostic = {
             "server": self.server_name,
             "endpoint": self.diagnostic_endpoint(endpoint),
             "model": self.settings.model,
             "generation": generation,
+            "prompt": prompt,
+            "model_identity": getattr(self, "model_identity", {"digest": None}),
         }
         data = self.request(
             "POST",
             endpoint,
             {
                 "model": self.settings.model,
-                "prompt": "Table Recognition:",
+                "prompt": prompt,
                 "images": [base64.b64encode(image).decode("ascii")],
                 "stream": False,
                 "options": generation,
             },
         )
+        self.last_diagnostic.update(
+            {
+                key: data.get(key)
+                for key in (
+                    "prompt_eval_count",
+                    "eval_count",
+                    "prompt_eval_duration",
+                    "eval_duration",
+                    "total_duration",
+                    "load_duration",
+                )
+            }
+        )
         text = data.get("response")
+        self.last_diagnostic["thinking_output"] = bool(data.get("thinking")) or (
+            isinstance(text, str) and "<think>" in text
+        )
         self.last_diagnostic.update(
             {
                 "done": data.get("done"),
@@ -359,6 +418,6 @@ class OllamaClient:
             )
         # Ollama omits the matched stop sequence from response. Restore only that
         # delimiter after a confirmed stop, never cell values or incomplete rows.
-        if single_table and data.get("done_reason") == "stop" and "</table>" not in text.lower():
+        if use_stop and data.get("done_reason") == "stop" and "</table>" not in text.lower():
             text += "</table>"
         return text

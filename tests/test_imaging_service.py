@@ -74,9 +74,8 @@ def test_fragment_geometry_not_text():
 def test_unstructured_overlap_stitch_is_conservative():
     first = Table([Cell(row, 0, text) for row, text in enumerate(["A", "B", "C"])], 3, 1)
     second = Table([Cell(row, 0, text) for row, text in enumerate(["B", "C", "D"])], 3, 1)
-    result = stitch_unstructured([(0, 500, first), (400, 900, second)])
-    assert [result.grid()[row, 0].text for row in range(4)] == ["A", "B", "C", "D"]
-    assert result.issues[0].code == "GEOMETRY_UNKNOWN"
+    with pytest.raises(StructureError, match="нужны координаты"):
+        stitch_unstructured([(0, 500, first), (400, 900, second)])
 
     conflict = Table([Cell(row, 0, text) for row, text in enumerate(["B", "X", "D"])], 3, 1)
     with pytest.raises(StructureError, match="однозначно сопоставить"):
@@ -102,7 +101,7 @@ def test_display_limit_propagates_to_batch_review(server, tmp_path):
     synthetic(2, 2).save(path)
     result = convert(path, Settings(url=url))[0]
     assert result.status == "REVIEW"
-    assert result.warnings == 1
+    assert result.warnings >= 1
     assert "DISPLAY_LIMIT" in result.message
     report = json.loads(
         next((tmp_path / "results").glob("report-*.json")).read_text(encoding="utf-8")
@@ -161,16 +160,19 @@ def test_no_grid_truncation_retries_smaller_and_records_private_diagnostics(tmp_
     ImageDraw.Draw(image).text((10, 10), "table rows", fill="black")
     document = recognize_document(image, client, tmp_path)
     assert client.calls == 3
-    assert document.tables[0].rows == 4
-    assert document.tables[0].issues[0].code == "GEOMETRY_UNKNOWN"
+    assert len(document.tables) == 2
+    assert [t.rows for t in document.tables] == [3, 3]
+    # Matching OCR rows from distinct source regions are observations, never
+    # evidence that permits deleting a real repeated row.
+    assert document.tables[0].issues[0].code == "UNPLACED_OBSERVATION"
     report = json.loads((tmp_path / "run.json").read_text(encoding="utf-8"))
-    assert report["status"] == "REVIEW"
+    assert report["status"] == "PARTIAL"
     assert report["request_count"] == 3
     assert report["retry_count"] == 2
     assert report["requests"][0]["provider"]["done_reason"] == "length"
-    assert report["requests"][1]["route"] == "adaptive-page-fragment"
+    assert report["requests"][1]["route"] == "page-region"
     sidecar = json.loads((tmp_path / "observations.json").read_text(encoding="utf-8"))
-    assert sidecar["tables"][0]["cells"][-2]["text"] == "D"
+    assert sidecar["tables"][1]["cells"][-2]["text"] == "D"
 
     blank_client = Client()
     with pytest.raises(StructureError, match="видимого текста"):
@@ -254,7 +256,8 @@ def test_cli_batch_unicode_collisions_errors(server, tmp_path, monkeypatch):
             str(tmp_path / "single"),
         ],
     )
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
+    assert "Требуют проверки: 1" in result.output
     assert (tmp_path / "single" / "таблица.xlsx").exists()
     assert runner.invoke(app, ["--version"]).output.strip() == __import__("localocr").__version__
     assert runner.invoke(app, ["--help"]).exit_code == 0
@@ -304,7 +307,7 @@ def test_long_table_recovery(server, tmp_path):
 
     with patch.object(OllamaClient, "recognize", recognize):
         results = convert(path, Settings(url=url), diagnostics=tmp_path / "diagnostics")
-    assert results[0].status == "SUCCESS"
+    assert results[0].status == "REVIEW"
     assert results[0].shapes == [(50, 2)]
     trace = json.loads((tmp_path / "diagnostics/long/run.json").read_text(encoding="utf-8"))
     assert trace["request_count"] > 1
@@ -352,10 +355,13 @@ def test_adaptive_local_recovery(server, tmp_path, monkeypatch, mode):
 
     monkeypatch.setattr(OllamaClient, "recognize", recognize)
     result = convert(path, Settings(url=server[0]))[0]
-    expected = {"incomplete": "SUCCESS", "conflict": "REVIEW", "unresolved": "REVIEW"}[mode]
+    expected = {"incomplete": "REVIEW", "conflict": "REVIEW", "unresolved": "REVIEW"}[mode]
     assert result.status == expected
     assert len(calls) <= 96
     if mode == "incomplete":
         assert min(calls) <= 10 and result.shapes == [(50, 2)]
     else:
-        assert calls.count(1) == 2
+        # Disjoint geometric fragments preserve row 33 even if its text repeats
+        # row 32; no text overlap is invented, and one OCR stays unverified.
+        assert result.unverified_content == 100
+        assert result.verified_anchors == 0

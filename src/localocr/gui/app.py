@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from localocr import __version__, build_commit
-from localocr.config import AppConfig, config_dir, load_config, save_config, setup_logging
+from localocr.config import config_dir, load_config, save_config, setup_logging
 from localocr.network import redact
 from localocr.ollama import Cancelled
 from localocr.providers import create_provider
@@ -202,7 +202,8 @@ class Window(QMainWindow):
                 widget.setVisible(mode == self.provider.currentData())
 
     def current_config(self):
-        return AppConfig(
+        return replace(
+            self.config,
             simple_mode=self.config.simple_mode,
             folder=self.folder.text(),
             ollama_url=self.url.text(),
@@ -317,16 +318,16 @@ class Window(QMainWindow):
         else:
             counts = {
                 status: sum(r.status == status for r in result)
-                for status in ["SUCCESS", "REVIEW", "FAILED", "SKIPPED"]
+                for status in ["SUCCESS", "REVIEW", "PARTIAL", "FAILED", "SKIPPED"]
             }
             self.status.appendPlainText(
                 f"Обработано файлов: {len(result)}\n"
                 f"Успешно: {counts['SUCCESS']} · Требуют проверки (REVIEW): {counts['REVIEW']}\n"
-                f"Ошибок: {counts['FAILED']} · Пропущено: {counts['SKIPPED']}\n"
+                f"Частично (PARTIAL): {counts['PARTIAL']} · Ошибок: {counts['FAILED']} · Пропущено: {counts['SKIPPED']}\n"
                 f"Каталог результатов: {Path(self.folder.text()) / 'results'}"
             )
             for item in result:
-                if item.status in {"REVIEW", "FAILED"}:
+                if item.status in {"REVIEW", "PARTIAL", "FAILED"}:
                     self.status.appendPlainText(
                         f"{item.source}: {item.status}; предупреждений: {item.warnings}. {item.message}"
                     )

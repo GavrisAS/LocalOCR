@@ -74,6 +74,8 @@ def selected_settings(
             model_path=model_path,
             mmproj_path=mmproj_path,
             timeout=timeout,
+            max_calls=config.ocr_max_calls,
+            max_image_seconds=config.embedded_max_image_seconds,
         )
     return config.settings(timeout)
 
@@ -188,6 +190,7 @@ def convert(
         for status, label in [
             ("SUCCESS", "Успешно обработано"),
             ("REVIEW", "Требуют проверки"),
+            ("PARTIAL", "Частично восстановлено"),
             ("FAILED", "Ошибок"),
             ("SKIPPED", "Пропущено"),
         ]:
@@ -195,7 +198,7 @@ def convert(
         typer.echo(
             f"Каталог результатов: {output_dir or ((source if source.is_dir() else source.parent) / 'results')}"
         )
-        if any(result.status in {"FAILED", "REVIEW"} for result in results):
+        if any(result.status in {"FAILED", "REVIEW", "PARTIAL"} for result in results):
             raise typer.Exit(1)
     except (ValueError, OSError) as error:
         from localocr.runtime import write_error

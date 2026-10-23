@@ -12,6 +12,7 @@ from localocr.ollama import OCRServerError, OllamaClient, Settings
 class OCRProvider(Protocol):
     on_network_event: object
     on_runtime_status: object
+    last_run_metrics: dict
 
     def doctor(self) -> str: ...
     def recognize(self, image: bytes, *, single_table: bool = False) -> str: ...
@@ -30,10 +31,14 @@ class OpenWebUISettings:
     api: str = "proxy"
     ssl_verify: bool = True
     trust_env: bool = False
+    max_calls: int = 24
+    max_image_seconds: float = 180
 
     def validate(self):
         if type(self.ssl_verify) is not bool or type(self.trust_env) is not bool:
             raise ValueError("ssl_verify и trust_env должны быть boolean")
+        if not 1 <= self.max_calls <= 96 or not 1 <= self.max_image_seconds <= 7200:
+            raise ValueError("Недопустимый бюджет изображения")
         parsed = urlsplit(self.url)
         if (
             parsed.scheme not in {"http", "https"}
@@ -91,6 +96,7 @@ class OpenWebUIOllamaProxyProvider(OllamaClient):
 
 class OpenWebUIChatProvider(OpenWebUIOllamaProxyProvider):
     server_name = "OpenWebUI Chat"
+    supports_text_recognition = False
 
     def request(self, method: str, endpoint: str, payload=None):
         return OllamaClient.request(self, method, endpoint, payload)

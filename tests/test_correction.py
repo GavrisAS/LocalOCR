@@ -217,7 +217,9 @@ def test_technical_success_with_wrong_ocr(server, tmp_path):
     path = tmp_path / "synthetic.png"
     image.save(path)
     result = convert(path, Settings(url=server[0]))[0]
-    assert result.status == "SUCCESS"
+    assert result.status == "REVIEW"
+    assert result.verified_anchors == 0
+    assert result.unverified_content > 0
     assert result.output is not None
     actual = export(Path(result.output))
     gold = template(2, 2)

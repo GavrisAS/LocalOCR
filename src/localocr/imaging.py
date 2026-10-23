@@ -23,11 +23,15 @@ class Layout:
 
 def load_image(path: Path) -> Image.Image:
     with Image.open(path) as source:
+        original_size = source.size
+        orientation = source.getexif().get(274, 1)
         if source.width * source.height > 40_000_000:
             raise ValueError("Изображение превышает 40 миллионов пикселей")
         if getattr(source, "n_frames", 1) != 1:
             raise ValueError("Многостраничные изображения пока не поддерживаются")
         image = ImageOps.exif_transpose(source).convert("RGB")
+    transposed_size = image.size
+    deskew_angle = 0.0
     gray = cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2GRAY)
     binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
     lines = cv2.HoughLinesP(
@@ -47,10 +51,52 @@ def load_image(path: Path) -> Image.Image:
         if angles:
             angle = float(np.median(angles))
             if 0.2 < abs(angle) < 8:
+                deskew_angle = angle
                 image = image.rotate(
                     angle, resample=Image.Resampling.BICUBIC, expand=True, fillcolor="white"
                 )
+    w, h = original_size
+    inverse_exif = {
+        1: [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+        2: [[-1, 0, w], [0, 1, 0], [0, 0, 1]],
+        3: [[-1, 0, w], [0, -1, h], [0, 0, 1]],
+        4: [[1, 0, 0], [0, -1, h], [0, 0, 1]],
+        5: [[0, 1, 0], [1, 0, 0], [0, 0, 1]],
+        6: [[0, 1, 0], [-1, 0, h], [0, 0, 1]],
+        7: [[0, -1, w], [-1, 0, h], [0, 0, 1]],
+        8: [[0, -1, w], [1, 0, 0], [0, 0, 1]],
+    }.get(orientation, [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    angle = np.radians(deskew_angle)
+    cos, sin = np.cos(angle), np.sin(angle)
+    old_x, old_y = transposed_size[0] / 2, transposed_size[1] / 2
+    new_x, new_y = image.width / 2, image.height / 2
+    inverse_rotation = np.array(
+        [
+            [cos, -sin, old_x - cos * new_x + sin * new_y],
+            [sin, cos, old_y - sin * new_x - cos * new_y],
+            [0, 0, 1],
+        ]
+    )
+    matrix = np.asarray(inverse_exif) @ inverse_rotation
+    image.info["localocr_normalization"] = {
+        "original_size": original_size,
+        "exif_orientation": orientation,
+        "deskew_degrees": deskew_angle,
+        "normalized_to_original": matrix[:2].tolist(),
+    }
     return image
+
+
+def source_polygon(image, region):
+    """Map normalized crop corners back to source edges (x,y), before EXIF/deskew."""
+    matrix = image.info.get("localocr_normalization", {}).get(
+        "normalized_to_original", [[1, 0, 0], [0, 1, 0]]
+    )
+    left, top, right, bottom = region
+    return [
+        tuple(round(sum(a * b for a, b in zip(row, (x, y, 1))), 3) for row in matrix)
+        for x, y in ((left, top), (right, top), (right, bottom), (left, bottom))
+    ]
 
 
 def centers(values: np.ndarray, merge_gap: int = 3) -> list[int]:
@@ -208,3 +254,76 @@ def row_fragments(
         context = [boundary for boundary in boundaries if start < boundary <= end - overlap_rows]
         start = context[-1] if context else end
     return ranges
+
+
+def content_mask(image: Image.Image) -> np.ndarray:
+    """Ink evidence after removing long rules, without interpreting glyphs as text."""
+    gray = cv2.cvtColor(np.asarray(image.convert("RGB")), cv2.COLOR_RGB2GRAY)
+    binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
+    rules = np.zeros_like(binary)
+    for size in ((max(30, image.width // 20), 1), (1, max(30, image.height // 20))):
+        rules = cv2.bitwise_or(
+            rules,
+            cv2.morphologyEx(
+                binary, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, size)
+            ),
+        )
+    # A one-pixel halo removes antialiased line edges. This is occupancy evidence,
+    # never proof that an empty response is a correctly recognized empty cell.
+    rules = cv2.dilate(rules, np.ones((3, 3), np.uint8))
+    return cv2.bitwise_and(binary, cv2.bitwise_not(rules))
+
+
+def region_has_ink(mask: np.ndarray, box: tuple[int, int, int, int]) -> bool:
+    left, top, right, bottom = box
+    margin = 3
+    roi = mask[
+        top + margin : max(top + margin, bottom - margin),
+        left + margin : max(left + margin, right - margin),
+    ]
+    if not roi.size:
+        return False
+    count, _, stats, _ = cv2.connectedComponentsWithStats(roi, connectivity=8)
+    return any(stats[i, cv2.CC_STAT_AREA] >= 4 for i in range(1, count))
+
+
+def grid_hypothesis(image: Image.Image, layout: Layout):
+    from localocr.domain import GridHypothesis
+
+    gray = cv2.cvtColor(np.asarray(image.convert("RGB")), cv2.COLOR_RGB2GRAY)
+    binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
+    horizontal = cv2.morphologyEx(
+        binary,
+        cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (max(15, image.width // 40), 1)),
+    )
+    vertical = cv2.morphologyEx(
+        binary,
+        cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(15, image.height // 45))),
+    )
+
+    def support(mask, position, start, end, transpose=False):
+        if transpose:
+            mask = mask.T
+        margin = max(2, min(10, (end - start) // 10))
+        strip = mask[max(0, position - 3) : position + 4, start + margin : end - margin]
+        return round(float(np.mean(np.any(strip, axis=0))), 3) if strip.size else 0.0
+
+    hs = [
+        [support(horizontal, y, a, b) for a, b in zip(layout.xs, layout.xs[1:])] for y in layout.ys
+    ]
+    vs = [
+        [support(vertical, x, a, b, True) for x in layout.xs]
+        for a, b in zip(layout.ys, layout.ys[1:])
+    ]
+    scaled = detect_layout(image.resize((max(1, image.width // 2), max(1, image.height // 2))))
+    tolerance = max(5, round(max(image.size) * 0.005))
+    stable = any(
+        len(other.xs) == len(layout.xs)
+        and len(other.ys) == len(layout.ys)
+        and all(abs(a - b * 2) <= tolerance for a, b in zip(layout.xs, other.xs))
+        and all(abs(a - b * 2) <= tolerance for a, b in zip(layout.ys, other.ys))
+        for other in scaled
+    )
+    return GridHypothesis(layout.region, layout.xs, layout.ys, hs, vs, stable)

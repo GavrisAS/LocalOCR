@@ -235,6 +235,19 @@ def write_workbook(
     document: TableDocument, path: Path, overwrite=False, cancel: Event | None = None
 ):
     document.validate()
+
+    def original_region(region):
+        matrix = document.normalization.get("normalized_to_original")
+        if not matrix or not region:
+            return ""
+        left, top, right, bottom = region
+        return str(
+            [
+                tuple(round(sum(a * b for a, b in zip(row, (x, y, 1))), 3) for row in matrix)
+                for x, y in ((left, top), (right, top), (right, bottom), (left, bottom))
+            ]
+        )
+
     book = Workbook()
     book.remove(book.active)
     font = _font(FONT_SIZE)
@@ -269,7 +282,16 @@ def write_workbook(
             target.border = border
             if cell.warnings:
                 target.fill = PatternFill("solid", fgColor="FFF2CC")
-                review.append((index, cell.row + 1, cell.column + 1, "; ".join(cell.warnings)))
+                review.append(
+                    (
+                        index,
+                        cell.row + 1,
+                        cell.column + 1,
+                        "; ".join(cell.warnings),
+                        str(cell.source_region or ""),
+                        str(cell.provenance.source_polygon or ""),
+                    )
+                )
             if cell.rowspan > 1 or cell.colspan > 1:
                 sheet.merge_cells(
                     start_row=cell.row + 1,
@@ -281,7 +303,7 @@ def write_workbook(
             for target in row:
                 target.border = border
         for row, column, message in _autofit_sheet(sheet):
-            issue = ValidationIssue("DISPLAY_LIMIT", message, row, column)
+            issue = ValidationIssue("DISPLAY_LIMIT", message, row - 1, column - 1)
             if issue not in table.issues:
                 table.issues.append(issue)
         grid = table.grid()
@@ -295,10 +317,40 @@ def write_workbook(
             c.row + c.rowspan <= headers for c in table.cells if c.row < headers
         ):
             sheet.freeze_panes = f"A{headers + 1}"
-        review.extend((index, issue.row, issue.column, issue.message) for issue in table.issues)
+        review.extend(
+            (
+                index,
+                None if issue.row is None else issue.row + 1,
+                None if issue.column is None else issue.column + 1,
+                issue.message,
+                str(issue.source_region or ""),
+                original_region(issue.source_region),
+            )
+            for issue in table.issues
+        )
+    review.extend(
+        (
+            None,
+            None if issue.row is None else issue.row + 1,
+            None if issue.column is None else issue.column + 1,
+            issue.message,
+            str(issue.source_region or ""),
+            original_region(issue.source_region),
+        )
+        for issue in document.issues
+    )
     if review:
         sheet = book.create_sheet("Проверка")
-        sheet.append(["Таблица", "Строка", "Столбец", "REVIEW"])
+        sheet.append(
+            [
+                "Таблица",
+                "Строка",
+                "Столбец",
+                "REVIEW",
+                "Регион (normalized-image)",
+                "Полигон оригинала (x,y)",
+            ]
+        )
         for row in review:
             sheet.append(list(row))
             for target in sheet[sheet.max_row]:
