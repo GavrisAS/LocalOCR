@@ -28,8 +28,9 @@ def main():
     parser.add_argument("--url", default="http://127.0.0.1:11434")
     parser.add_argument("--model", default="glm-ocr:latest")
     parser.add_argument("--timeout", type=float, default=60)
+    parser.add_argument("--complete-chat-control", action="store_true")
     args = parser.parse_args()
-    args.output.mkdir(parents=True, exist_ok=False)
+    args.output.mkdir(parents=True, exist_ok=args.complete_chat_control)
     client = OllamaClient(Settings(url=args.url, model=args.model, retries=0, timeout=args.timeout))
     client.doctor()
     manifest = {
@@ -37,7 +38,12 @@ def main():
         "model": client.model_identity,
         "show": client.request("POST", "/api/show", {"model": args.model}),
     }
-    (args.output / "environment.json").write_text(json.dumps(manifest, indent=2))
+    if args.complete_chat_control:
+        previous = json.loads((args.output / "environment.json").read_text())
+        if previous["model"]["digest"] != manifest["model"]["digest"]:
+            raise ValueError("Benchmark model changed")
+    else:
+        (args.output / "environment.json").write_text(json.dumps(manifest, indent=2))
     # Deterministic first/last images and two held-out generated controls. Input
     # selection never depends on names or recognized content.
     paths = discover(args.source)
@@ -46,7 +52,9 @@ def main():
     inputs = [(f"real-{i + 1}", im, None) for i, im in enumerate(real)] + [
         (f"control-{i + 1}", case.image, case.gold) for i, case in enumerate(controls)
     ]
-    results: list[dict] = []
+    results: list[dict] = (
+        json.loads((args.output / "metrics.json").read_text()) if args.complete_chat_control else []
+    )
 
     def run(
         name,
@@ -174,6 +182,14 @@ def main():
             flush=True,
         )
 
+    if args.complete_chat_control:
+        if len(results) != 17:
+            raise ValueError("Expected the original 17-call bounded benchmark")
+        run(*inputs[2], endpoint="/api/chat")
+        return
+    # Establish actual OCR correctness of the chat path on a known control
+    # before comparing difficult real inputs; no endpoint migration by guess.
+    run(*inputs[2], endpoint="/api/chat")
     for name, image, gold in inputs:
         for predict in (8000, 16000):
             run(name, image, gold, predict=predict)

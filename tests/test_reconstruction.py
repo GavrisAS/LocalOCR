@@ -142,6 +142,10 @@ def test_cancel_keeps_existing_output_and_removes_temporary_workbook(tmp_path):
 
 def test_journal_recovers_torn_append_and_excludes_concurrent_writer(tmp_path):
     with Journal(tmp_path) as journal:
+        from localocr.runtime import portable_root
+
+        assert journal.lock_path.is_relative_to(portable_root())
+        assert not (tmp_path / ".localocr-journal.lock").exists()
         journal.append({"key": "done", "status": "SUCCESS"})
         with pytest.raises(ValueError, match="занят"):
             with Journal(tmp_path):

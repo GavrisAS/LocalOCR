@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from localocr.domain import PIPELINE_VERSION
+from localocr.runtime import portable_root
 
 
 def file_hash(path: Path) -> str:
@@ -60,10 +61,12 @@ def settings_identity(settings, client) -> dict:
 class Journal:
     def __init__(self, directory: Path):
         self.path = directory / "jobs.jsonl"
-        self.lock_path = directory / ".localocr-journal.lock"
+        lock_key = hashlib.sha256(str(directory.resolve()).encode()).hexdigest()
+        self.lock_path = portable_root() / "work" / "journal-locks" / (lock_key + ".lock")
         self.records: dict[str, dict] = {}
 
     def __enter__(self):
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = self.lock_path.open("a+b")
         try:
             if os.name == "nt":

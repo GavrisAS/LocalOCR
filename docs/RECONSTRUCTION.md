@@ -73,7 +73,7 @@ Writer сохраняет только validated canonical таблицы. OCR-�
 
 В `results/jobs.jsonl` находятся source path/hash, backend/model identity,
 settings/pipeline, attempts, status, output hash и latency. Записи fsync; оборванная
-запись игнорируется. OS lock допускает один writer данного каталога и снимается
+запись игнорируется. OS lock в `<portable-root>/work/journal-locks/` (hash каталога results) допускает один writer данного каталога и снимается
 после падения процесса. XLSX и JSON reports публикуются атомарно.
 
 Завершённые `SUCCESS/REVIEW/PARTIAL` с известным digest и совпавшими хешами можно
@@ -101,7 +101,7 @@ uv run pytest --junitxml=.evidence/hybrid/regression.xml
 uv run python scripts/qualify_tables.py data --output data/new-private-run
 uv run python scripts/benchmark_ollama.py data --output data/new-private-benchmark
 uv run python scripts/generate_holdout.py --output data/new-holdout --seed 713091 --count 8
-uv run python scripts/qualify_tables.py data/new-holdout --output data/new-holdout-run
+uv run python scripts/qualify_tables.py data/new-holdout --output data/new-holdout-run --through-service
 uv run python scripts/replay_tables.py data/new-private-run --output data/new-private-replay
 ```
 
