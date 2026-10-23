@@ -43,7 +43,7 @@ def main():
                     except ArithmeticError:
                         good = False
                     good &= actual.data_type == "n"
-                    if isinstance(actual.value, float):
+                    if "." in text or "," in text:
                         good &= actual.number_format == "0." + "0" * len(
                             text.replace(",", ".").split(".")[1]
                         )

@@ -78,7 +78,7 @@ def main():
             # Compare actual canonical values, positions, spans and provenance,
             # without publishing those private values in the replay summary.
             actual = [asdict(t) for t in document.tables]
-            matches = actual == recorded["tables"]
+            matches = json.loads(json.dumps(actual)) == recorded["tables"]
             write_workbook(document, args.output / f"{record['case']}.xlsx")
             outcome = document.outcome()
         except ValueError:
