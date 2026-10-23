@@ -21,7 +21,7 @@ OCR pipeline 3 rows CPU 4.323s / GPU 0.591s; 30 rows CPU 56.978s / GPU 5.692s.
 These are same-host measurements, with OS file cache present; no disk-cold claim.
 Per-inference measurements and repeated runs are in machine-readable handoff files.
 They do not qualify Windows CUDA 12.4, Vulkan, every supported architecture, or
-accuracy on user documents. No independent human gold is available for tabl3_1_a.jpg.
+accuracy on user documents. No independent human gold is available for the private real-image example.
 
 Windows GPU hardware: GPU_HARDWARE_PENDING. Clean Windows VM and real internet-
 disconnected GPU tests: PENDING. Windows CPU frozen 3/30 row qualification and

@@ -65,7 +65,7 @@ BUILD_COMMIT. CLI диагностика `--build-commit` и GUI smoke `--expect
 
 ## Local-only quality
 
-Изображение и `.evidence/real-user5/tabl3_1_a.xlsx` существуют локально.
+Изображение и baseline XLSX существуют локально; приватные имена файлов опущены.
 Baseline экспортирован без inference; исходный v0.4 XLSX не изменяется.
 `uv run python -m localocr.quality --xlsx PATH --output .evidence/quality-v0.4`
 создаёт actual.json (coordinates 1-based, spans, value type, number_format,
