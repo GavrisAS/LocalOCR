@@ -279,3 +279,20 @@ def test_unavailable_backend_is_not_retried_for_every_crop():
     with pytest.raises(StructureError):
         recognize_document(ruled(8, 3), client, None)
     assert client.calls == 1
+
+
+def test_oversized_geometry_is_rejected_before_materializing_cell_evidence(monkeypatch):
+    from localocr.imaging import Layout
+
+    huge = Layout((0, 0, 200, 200), list(range(1002)), [0, 100, 200])
+    monkeypatch.setattr("localocr.reconstruction.detect_layout", lambda image: [huge])
+
+    def forbidden(*args):
+        raise AssertionError("Out-of-limit boundary matrix must not be allocated")
+
+    monkeypatch.setattr("localocr.reconstruction.grid_hypothesis", forbidden)
+    client = Client([html([["a", "b"], ["c", "d"]])])
+    doc = recognize_document(ruled(2, 2), client, None)
+    assert doc.outcome()["status"] == "PARTIAL"
+    assert doc.issues[0].code == "GRID_LIMIT_EXCEEDED"
+    assert len(doc.tables[0].cells) == 4 and client.calls == 1

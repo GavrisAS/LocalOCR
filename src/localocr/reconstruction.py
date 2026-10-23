@@ -44,7 +44,19 @@ def recognize_document(image, client, diagnostics: Path | None, source_name=None
     tables = []
     document_issues = []
     layout_started = time.monotonic()
-    layouts = detect_layout(image)
+    layouts = []
+    for candidate in detect_layout(image):
+        rows, columns = len(candidate.ys) - 1, len(candidate.xs) - 1
+        if not 1 <= rows <= 10000 or not 1 <= columns <= 1000 or rows * columns > 100000:
+            document_issues.append(
+                ValidationIssue(
+                    "GRID_LIMIT_EXCEEDED",
+                    "Геометрическая гипотеза превышает лимиты canonical сетки",
+                    source_region=candidate.region,
+                )
+            )
+        else:
+            layouts.append(candidate)
     hypotheses = [grid_hypothesis(image, layout) for layout in layouts]
     ink = content_mask(image)
     layout_seconds = time.monotonic() - layout_started
