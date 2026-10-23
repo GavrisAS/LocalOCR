@@ -180,12 +180,30 @@ def convert(
                     )
                     attempts = journal.records.get(key, {}).get("attempts", 0) + 1
                     if cached and not overwrite:
+                        previous = cached.get("result", {})
+                        evidence = {
+                            key: previous.get(key, 0)
+                            for key in (
+                                "tables",
+                                "warnings",
+                                "recognized_anchors",
+                                "verified_anchors",
+                                "unresolved_anchors",
+                                "unresolved_regions",
+                                "unverified_content",
+                            )
+                        }
                         result = JobResult(
                             path.name,
-                            "SKIPPED",
+                            cached["status"],
                             str(target),
-                            "Возобновлено: совпали source/model/settings/pipeline/output SHA256",
+                            "Возобновлено без OCR; сохранён статус "
+                            + cached["status"]
+                            + ". "
+                            + previous.get("message", ""),
+                            shapes=[tuple(shape) for shape in previous.get("shapes", [])],
                             resumed=True,
+                            **evidence,
                         )
                     elif target.exists() and not overwrite:
                         result = JobResult(
@@ -296,7 +314,7 @@ def convert(
                     )
                 result.seconds = round(time.monotonic() - start, 3)
                 results.append(result)
-                if key is not None and result.status != "SKIPPED":
+                if key is not None and result.status != "SKIPPED" and not result.resumed:
                     journal.append(
                         {
                             "key": key,
@@ -321,6 +339,7 @@ def convert(
             report = {
                 "cancelled": cancel.is_set(),
                 "discovered": len(paths),
+                "resumed": sum(result.resumed for result in results),
                 "results": [asdict(result) for result in results],
             }
             atomic_json(output_dir / f"report-{time.time_ns()}.json", report)

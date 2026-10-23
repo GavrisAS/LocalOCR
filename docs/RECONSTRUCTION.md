@@ -27,7 +27,8 @@ OCR-span, четыре внешние стороны и отсутствие п�
   Пустая Excel-позиция с `provenance.state=unresolved` не считается пустой исходной
   ячейкой или распознанным значением. Она окрашена и описана в `Проверка`.
 - `FAILED`: непустых структурно применимых наблюдений нет; XLSX не публикуется.
-- `SKIPPED`: файл существует или подтверждено возобновление; это не новый OCR PASS.
+- `SKIPPED`: файл существует без подтверждённого fingerprint, `--overwrite` не выбран.
+  Это не OCR PASS. Cache hit сохраняет исходный статус и отмечается `resumed=true`.
 
 `recognized_anchors` считает непустые OCR-наблюдения, включая явно непривязанные;
 `verified_anchors` — только corroborated. Это разные величины.
@@ -77,7 +78,8 @@ settings/pipeline, attempts, status, output hash и latency. Записи fsync;
 после падения процесса. XLSX и JSON reports публикуются атомарно.
 
 Завершённые `SUCCESS/REVIEW/PARTIAL` с известным digest и совпавшими хешами можно
-возобновлять без OCR; `PARTIAL` остаётся partial, а не превращается в success.
+возобновлять без OCR; сохраняются исходные status/anchors/unresolved/unverified,
+а `resumed=true` и `calls=0` отличают cache hit. Cached REVIEW/PARTIAL сохраняют CLI exit 1.
 Изменение входа/настроек/digest создаёт другой ключ и другое имя XLSX, сохраняя
 прежнюю книгу. Неизвестный digest (например ограниченный OpenWebUI Chat) запрещает
 автоматический cache hit. Существующий файл без подтверждённого fingerprint требует

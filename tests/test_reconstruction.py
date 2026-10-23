@@ -161,11 +161,12 @@ def test_journal_recovers_torn_append_and_excludes_concurrent_writer(tmp_path):
     assert json.loads((tmp_path / "report.json").read_text()) == {"completed": True}
 
 
-def test_batch_resume_invalidation_and_tampered_output(server, tmp_path):
+@pytest.mark.parametrize("pending_status", ["REVIEW", "PARTIAL"])
+def test_batch_resume_invalidation_and_tampered_output(server, tmp_path, pending_status):
     from unittest.mock import patch
 
     source = tmp_path / "image.png"
-    ruled(2, 2).save(source)
+    ruled(2, 2, [(1, 0, "visible")] if pending_status == "PARTIAL" else []).save(source)
     # This transport fixture represents a declared digest, not real inference.
     original = __import__("localocr.ollama", fromlist=["OllamaClient"]).OllamaClient.doctor
 
@@ -179,10 +180,26 @@ def test_batch_resume_invalidation_and_tampered_output(server, tmp_path):
         first = convert(source, settings)[0]
         calls = sum(payload is not None for _, payload in server[1]["requests"])
         second = convert(source, settings)[0]
-        assert second.resumed and second.status == "SKIPPED"
+        assert second.resumed and second.status == first.status == pending_status
+        assert second.recognized_anchors == first.recognized_anchors
+        assert second.unverified_content == first.unverified_content
+        assert second.calls == 0 and second.http_attempts == 0
         assert sum(payload is not None for _, payload in server[1]["requests"]) == calls
+        from typer.testing import CliRunner
+
+        from localocr.cli import app
+
+        cached_cli = CliRunner().invoke(app, ["convert", str(source), "--ollama-url", server[0]])
+        assert cached_cli.exit_code == 1 and "Возобновлено без OCR: 1" in cached_cli.output
+        assert sum(payload is not None for _, payload in server[1]["requests"]) == calls
+        journal_entries = [
+            json.loads(line)
+            for line in (tmp_path / "results/jobs.jsonl").read_text().splitlines()
+            if line
+        ]
+        assert len(journal_entries) == 2 and journal_entries[-1]["attempts"] == 1
         changed = convert(source, replace(settings, num_predict=8000))[0]
-        assert changed.output != first.output and changed.status == "REVIEW"
+        assert changed.output != first.output and changed.status == pending_status
         assert first.output is not None and changed.output is not None
         assert Path(first.output).exists()
         Path(changed.output).write_bytes(b"tampered")

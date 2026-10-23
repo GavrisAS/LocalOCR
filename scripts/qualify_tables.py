@@ -197,8 +197,15 @@ def main():
             "checked": len(resumed),
             "resumed": sum(r.resumed for r in resumed),
             "additional_ocr_calls": getattr(client, "http_ocr_calls", 0) - before_resume,
+            "quality_statuses_preserved": all(
+                r.status == previous["status"] for r, previous in zip(resumed, completed)
+            ),
         }
-        if not all(r.resumed for r in resumed) or summary["resume"]["additional_ocr_calls"]:
+        if (
+            not all(r.resumed for r in resumed)
+            or summary["resume"]["additional_ocr_calls"]
+            or not summary["resume"]["quality_statuses_preserved"]
+        ):
             raise RuntimeError("Real service resume qualification failed")
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2))
 

@@ -31,6 +31,11 @@ def atomic_json(path: Path, value):
 def settings_identity(settings, client) -> dict:
     values = asdict(settings)
     values.pop("api_token", None)
+    # GUI defaults can be ints while Typer returns floats. Equivalent timeout
+    # values must produce the same cache identity across the shared service.
+    for name in ("timeout", "startup_timeout", "max_image_seconds"):
+        if name in values:
+            values[name] = float(values[name])
     identity = dict(getattr(client, "model_identity", {}))
     if not identity.get("digest") and type(settings).__name__ == "EmbeddedSettings":
         # Embedded resolves default model paths during doctor(). Qualify the
@@ -124,6 +129,9 @@ class Journal:
             "source_path": str(source.resolve()),
             "source_hash": file_hash(source),
             "identity": identity,
+            "settings_hash": hashlib.sha256(
+                json.dumps(identity["settings"], sort_keys=True, default=str).encode()
+            ).hexdigest(),
         }
         key = hashlib.sha256(
             json.dumps(fingerprint, sort_keys=True, default=str).encode()

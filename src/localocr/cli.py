@@ -195,6 +195,13 @@ def convert(
             ("SKIPPED", "Пропущено"),
         ]:
             typer.echo(f"{label}: {sum(r.status == status for r in results)}")
+        typer.echo(f"Возобновлено без OCR: {sum(r.resumed for r in results)}")
+        typer.echo(
+            f"OCR-наблюдений: {sum(r.recognized_anchors for r in results)} · "
+            f"подтверждено: {sum(r.verified_anchors for r in results)} · "
+            f"нерешённых позиций: {sum(r.unresolved_anchors for r in results)} · "
+            f"непроверено: {sum(r.unverified_content for r in results)}"
+        )
         typer.echo(
             f"Каталог результатов: {output_dir or ((source if source.is_dir() else source.parent) / 'results')}"
         )

@@ -324,12 +324,15 @@ class Window(QMainWindow):
                 f"Обработано файлов: {len(result)}\n"
                 f"Успешно: {counts['SUCCESS']} · Требуют проверки (REVIEW): {counts['REVIEW']}\n"
                 f"Частично (PARTIAL): {counts['PARTIAL']} · Ошибок: {counts['FAILED']} · Пропущено: {counts['SKIPPED']}\n"
+                f"Возобновлено без OCR: {sum(r.resumed for r in result)}\n"
                 f"Каталог результатов: {Path(self.folder.text()) / 'results'}"
             )
             for item in result:
                 if item.status in {"REVIEW", "PARTIAL", "FAILED"}:
                     self.status.appendPlainText(
-                        f"{item.source}: {item.status}; предупреждений: {item.warnings}. {item.message}"
+                        f"{item.source}: {item.status}; OCR-наблюдений: {item.recognized_anchors}; "
+                        f"нерешённых позиций: {item.unresolved_anchors}; непроверено: {item.unverified_content}; "
+                        f"предупреждений: {item.warnings}. {item.message}"
                     )
         if self.worker and not self.worker.cancel.is_set():
             self.bar.setRange(0, 1)
