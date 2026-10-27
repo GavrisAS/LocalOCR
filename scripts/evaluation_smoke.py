@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import time
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Event
@@ -268,9 +269,21 @@ def main():
     p.add_argument("--zip", type=Path)
     a = p.parse_args()
     started = time.time()
-    result = qualify(a.root.resolve(), a.version, a.commit)
     if a.zip:
-        result["archive"] = inspect_zip(a.zip)
+        archive = inspect_zip(a.zip)
+        with tempfile.TemporaryDirectory(prefix="LocalOCR ZIP Русский ") as extracted:
+            with zipfile.ZipFile(a.zip) as z:
+                z.extractall(extracted)
+                if sys.platform != "win32":
+                    for executable in (
+                        "LocalOCR/LocalOCR.exe",
+                        "LocalOCR/LocalOCR-CLI/LocalOCR-CLI.exe",
+                    ):
+                        (Path(extracted) / executable).chmod(0o700)
+            result = qualify(Path(extracted) / "LocalOCR", a.version, a.commit)
+        result["archive"] = archive
+    else:
+        result = qualify(a.root.resolve(), a.version, a.commit)
     result["seconds"] = round(time.time() - started, 2)
     a.output.parent.mkdir(parents=True, exist_ok=True)
     a.output.write_text(json.dumps(result, indent=2), encoding="utf-8")

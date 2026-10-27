@@ -43,8 +43,6 @@ try {
     Checked 'CLI frozen smoke'
     uv run python scripts/portable_smoke.py --root dist/LocalOCR --version $BuildVersion --commit $commit
     Checked 'Portable paths frozen smoke'
-    uv run python scripts/evaluation_smoke.py --root dist/LocalOCR --version $BuildVersion --commit $commit --output dist/evaluation-gates.json
-    Checked 'Mandatory frozen evaluation gates'
     # This is a fresh CI build; discard only its owned synthetic smoke state.
     foreach ($owned in @('work', 'diagnostics', 'cache')) {
         $path = Join-Path 'dist/LocalOCR' $owned
@@ -54,8 +52,8 @@ try {
     Get-ChildItem dist/LocalOCR -Filter 'localocr.log*' | Remove-Item -Force
     $zip = "dist/LocalOCR-v$BuildVersion-windows-x64.zip"
     Compress-Archive -Path dist/LocalOCR -DestinationPath $zip -Force
-    uv run python -c "from pathlib import Path; import sys; sys.path.insert(0,'scripts'); from evaluation_smoke import inspect_zip; print(inspect_zip(Path(sys.argv[1])))" $zip
-    Checked 'Lite ZIP privacy and layout'
+    uv run python scripts/evaluation_smoke.py --root dist/LocalOCR --version $BuildVersion --commit $commit --output dist/evaluation-gates.json --zip $zip
+    Checked 'Mandatory extracted ZIP frozen evaluation, privacy and layout gates'
     $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
     "$hash  LocalOCR-v$BuildVersion-windows-x64.zip" | Set-Content "$zip.sha256" -Encoding ascii
 } finally {

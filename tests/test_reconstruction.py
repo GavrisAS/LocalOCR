@@ -123,7 +123,7 @@ def test_total_request_budget_and_no_empty_workbook(tmp_path):
     with pytest.raises(StructureError):
         recognize_document(ruled(), client, tmp_path)
     assert client.calls == 2
-    assert json.loads((tmp_path / "run.json").read_text())["status"] == "FAILED"
+    assert json.loads((tmp_path / "run.json").read_text(encoding="utf-8"))["status"] == "FAILED"
     assert not list(tmp_path.glob("*.xlsx"))
 
 
@@ -158,7 +158,7 @@ def test_journal_recovers_torn_append_and_excludes_concurrent_writer(tmp_path):
     with Journal(tmp_path) as journal:
         assert "after-crash" in journal.records and "torn" not in journal.records
     atomic_json(tmp_path / "report.json", {"completed": True})
-    assert json.loads((tmp_path / "report.json").read_text()) == {"completed": True}
+    assert json.loads((tmp_path / "report.json").read_text(encoding="utf-8")) == {"completed": True}
 
 
 @pytest.mark.parametrize("pending_status", ["REVIEW", "PARTIAL"])
@@ -194,7 +194,7 @@ def test_batch_resume_invalidation_and_tampered_output(server, tmp_path, pending
         assert sum(payload is not None for _, payload in server[1]["requests"]) == calls
         journal_entries = [
             json.loads(line)
-            for line in (tmp_path / "results/jobs.jsonl").read_text().splitlines()
+            for line in (tmp_path / "results/jobs.jsonl").read_text(encoding="utf-8").splitlines()
             if line
         ]
         assert len(journal_entries) == 2 and journal_entries[-1]["attempts"] == 1

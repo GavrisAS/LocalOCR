@@ -72,6 +72,18 @@ def test_ten_thousand_rows_are_sequential_and_exact(tmp_path, monkeypatch):
         "😀" * 20000,
         "  Пробелы  ",
     ],
+    ids=[
+        "formula",
+        "plus",
+        "minus",
+        "at",
+        "xml-null",
+        "literal-escape",
+        "surrogate",
+        "noncharacters",
+        "long-astral",
+        "spaces",
+    ],
 )
 def test_xml_literal_roundtrip(tmp_path, text):
     ex = Extraction(lines=[text])
@@ -181,11 +193,11 @@ def test_batch_doctor_failure_reports_once_without_ocr(tmp_path, monkeypatch, co
     out = tmp_path / "out"
     result = service.convert(folder, provider.settings, out, fail_soft=True)
     assert len(result) == 1 and result[0].batch_level and result[0].status == "FAILED"
-    summary = json.loads((out / "summary.json").read_text())
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
     assert summary["counts"]["BLOCKED"] == summary["counts"]["INPUT_TOTAL"] == 10
     assert summary["counts"]["ATTEMPTED"] == summary["counts"]["XLSX_WITH_DATA"] == 0
     assert summary["batch"]["stage"] == "doctor"
-    assert "secret synthetic payload" not in (out / "summary.json").read_text()
+    assert "secret synthetic payload" not in (out / "summary.json").read_text(encoding="utf-8")
     assert not list(out.glob("*.xlsx"))
 
 
@@ -199,7 +211,7 @@ def test_exited_leader_descendants_and_unrelated_process(tmp_path):
         while process.poll() is None and time.monotonic() < deadline:
             time.sleep(0.01)
         assert process.poll() == 0
-        pid = int(marker.read_text())
+        pid = int(marker.read_text(encoding="utf-8"))
         terminate_owned(process)
         assert unrelated.poll() is None
         if os.name == "posix":
@@ -207,11 +219,11 @@ def test_exited_leader_descendants_and_unrelated_process(tmp_path):
             deadline = time.monotonic() + 2
             while (
                 status.exists()
-                and "\nState:\tZ" not in status.read_text()
+                and "\nState:\tZ" not in status.read_text(encoding="utf-8")
                 and time.monotonic() < deadline
             ):
                 time.sleep(0.01)
-            assert not status.exists() or "\nState:\tZ" in status.read_text()
+            assert not status.exists() or "\nState:\tZ" in status.read_text(encoding="utf-8")
         else:
             import ctypes
             from ctypes import wintypes
