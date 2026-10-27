@@ -15,6 +15,38 @@ def file_digest(path: Path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def inspect_zip(path):
+    with zipfile.ZipFile(path) as z:
+        assert z.testzip() is None
+        names = z.namelist()
+        assert len(names) == len(set(names))
+        assert {
+            "LocalOCR/LocalOCR.exe",
+            "LocalOCR/LocalOCR-CLI/LocalOCR-CLI.exe",
+            "LocalOCR/START_HERE_RU.md",
+        } <= set(names)
+        for n in names:
+            parts = Path(n).parts
+            assert not Path(n).is_absolute() and ".." not in parts and "\\" not in n
+            assert not set(parts) & {
+                "diagnostics",
+                "results",
+                "work",
+                "cache",
+                "embedded",
+                ".evidence",
+            }
+            assert Path(n).name not in {"config.json", "embedded.lock"}
+            assert not n.lower().endswith((".xlsx", ".gguf", ".log", ".png", ".jpg", ".jpeg"))
+            assert not Path(n).name.startswith("localocr.log")
+        return {
+            "status": "PASS",
+            "sha256": file_digest(path),
+            "size": path.stat().st_size,
+            "members": len(names),
+        }
+
+
 def verify(metadata, folder: Path, tag: str, sha: str, resolved_sha: str):
     name = f"LocalOCR-{tag}-windows-x64.zip"
     if resolved_sha != sha or metadata["tagName"] != tag:
@@ -69,6 +101,7 @@ def verify(metadata, folder: Path, tag: str, sha: str, resolved_sha: str):
         required = {"LocalOCR/LocalOCR.exe", "LocalOCR/LocalOCR-CLI/LocalOCR-CLI.exe"}
         if not required.issubset(archive.namelist()):
             raise ValueError("Frozen binaries missing")
+    inspect_zip(folder / name)
     return name
 
 
@@ -158,6 +191,26 @@ def main():
             ],
             check=True,
             timeout=30,
+        )
+        subprocess.run(
+            [
+                "uv",
+                "run",
+                "python",
+                "scripts/evaluation_smoke.py",
+                "--root",
+                str(folder / "extracted/LocalOCR"),
+                "--version",
+                args.tag[1:],
+                "--commit",
+                args.sha,
+                "--output",
+                "dist/published-lite-gates.json",
+                "--zip",
+                str(folder / name),
+            ],
+            check=True,
+            timeout=300,
         )
         if (folder / "portable-manifest.json").is_file():
             descriptor = json.loads((folder / "portable-manifest.json").read_text())

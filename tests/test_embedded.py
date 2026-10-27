@@ -52,6 +52,8 @@ def fake_engine(tmp_path, monkeypatch):
     launches = []
 
     def launch(args, **kwargs):
+        if "localocr.postprocess" in args:
+            return original(args, **kwargs)
         launches.append(args)
         return original([sys.executable, str(script), *args[1:]], **kwargs)
 
@@ -193,3 +195,63 @@ def test_gui_runtime_status_main_thread(fake_engine, tmp_path, monkeypatch, batc
         time.sleep(0.01)
     assert "не подтверждено" in window.embedded_status.text()
     window.close()
+
+
+@pytest.mark.parametrize("fault", ["crash", "timeout"])
+def test_failsoft_native_fault_continues_queue(fake_engine, tmp_path, fault):
+    """Real owned child exits/hangs; GUI/CLI shared controller survives next file."""
+    from dataclasses import replace
+
+    from PIL import Image
+
+    from localocr.service import convert
+
+    settings, script, launches = fake_engine
+    first = """
+  marker=Path(__file__).with_suffix('.first-post')
+  if not marker.exists():
+   marker.write_text('observed')
+   FAULT_ACTION
+""".replace("FAULT_ACTION", "import os; os._exit(7)" if fault == "crash" else "time.sleep(10)")
+    script.write_text(
+        'MODE="ready"\n' + FAKE.replace(" def do_POST(self):", " def do_POST(self):" + first)
+    )
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    for name in ["a.png", "b.png"]:
+        Image.new("RGB", (8, 8), "white").save(inputs / name)
+    results = convert(
+        inputs,
+        replace(settings, timeout=1, max_image_seconds=1),
+        tmp_path / "results",
+        fail_soft=True,
+    )
+    assert len(results) == 2
+    assert results[0].status == "FAILED"
+    assert results[0].worker_crashed if fault == "crash" else results[0].timeout
+    assert results[1].xlsx_with_data and results[1].status == "REVIEW"
+    assert len(launches) == 2
+
+
+def test_failsoft_refuses_changed_backend_identity(fake_engine, tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from PIL import Image
+
+    from localocr.service import convert
+
+    settings, _, _ = fake_engine
+    request = EmbeddedOCRProvider.request
+
+    def changed(self, method, endpoint, payload=None):
+        result = request(self, method, endpoint, payload)
+        if method == "POST":
+            self.active_candidate = replace(self.active_candidate, backend="vulkan")
+        return result
+
+    monkeypatch.setattr(EmbeddedOCRProvider, "request", changed)
+    image = tmp_path / "identity.png"
+    Image.new("RGB", (8, 8)).save(image)
+    result = convert(image, settings, tmp_path / "results", fail_soft=True)[0]
+    assert result.status == "FAILED" and result.error_codes == ["BACKEND_CHANGED"]
+    assert not list((tmp_path / "results").glob("*.xlsx"))

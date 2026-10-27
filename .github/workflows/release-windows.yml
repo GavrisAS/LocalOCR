@@ -28,6 +28,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+    timeout-minutes: 20
     runs-on: ${{ matrix.os }}
     env:
       QT_QPA_PLATFORM: offscreen
@@ -47,9 +48,15 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run ty check
-      - run: uv run pytest
+      - run: uv run pytest --junitxml=test-results.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-tests-${{ matrix.os }}-attempt-${{ github.run_attempt }}
+          path: test-results.xml
   build:
     needs: [reserve, checks]
+    timeout-minutes: 30
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -70,7 +77,7 @@ jobs:
           Copy-Item dist/*.sha256 dist/release/
           Copy-Item docs/RELEASE_NOTES.md dist/release-notes.md
       - name: Real Windows F16 qualification and Portable packaging
-        if: github.run_attempt == 1
+        if: github.run_attempt == 1 && vars.LOCALOCR_QUALIFY_F16 == 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -103,6 +110,7 @@ jobs:
         with:
           name: windows-distribution-attempt-${{ github.run_attempt }}
           path: |
+            dist/evaluation-gates.json
             dist/release/*windows-x64.zip
             dist/release/*.sha256
             dist/release/*manifest.json
@@ -126,6 +134,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Published release verification failed' }
   verify-published-portable:
     needs: [reserve, build]
+    timeout-minutes: 30
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -136,6 +145,13 @@ jobs:
           version: '0.13.0'
       - run: uv python install 3.14
       - run: uv sync --locked
+      - name: Verify downloaded immutable Lite including mandatory frozen gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          uv run python scripts/verify_release.py --tag '${{ needs.reserve.outputs.tag }}' --sha '${{ github.sha }}' --require-existing
+          if ($LASTEXITCODE -ne 0) { throw 'Downloaded Lite verification failed' }
       - name: Download immutable published parts and qualify in a separate path
         env:
           GH_TOKEN: ${{ github.token }}
@@ -159,5 +175,6 @@ jobs:
         with:
           name: published-portable-evidence-attempt-${{ github.run_attempt }}
           path: |
+            dist/published-lite-gates.json
             published-qualification.json
             published-parts/portable-manifest.json

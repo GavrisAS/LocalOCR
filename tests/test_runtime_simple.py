@@ -83,7 +83,7 @@ def test_simple_settings_and_controls():
     app = QApplication.instance() or QApplication([])
     config = replace(
         AppConfig(),
-        provider="ollama",
+        provider="openwebui",
         openwebui_api="chat",
         openwebui_url="https://example.invalid",
         openwebui_model="fixture",
@@ -101,12 +101,12 @@ def test_simple_settings_and_controls():
     assert not window.web_url.isVisible()
     assert str(config_dir() / "config.json") in window.status.toPlainText()
     settings = window.runtime_settings()
-    assert settings.api == "proxy" and settings.api_token == config.api_token
+    assert settings.api == config.openwebui_api and settings.api_token == config.api_token
     for mode in ("gpu", "cpu"):
         window.mode_buttons[mode].setChecked(True)
         settings = window.runtime_settings()
         assert settings.device_mode == mode and settings.precision == "f16"
-        assert window.current_config().provider == "ollama"
+        assert window.current_config().provider == "openwebui"
         assert window.current_config().openwebui_api == "chat"
         assert window.current_config().precision == "q8_0"
         window.update_progress(1, 2, "progress")
@@ -168,8 +168,8 @@ def test_simple_proxy_worker_lifecycle(server, tmp_path, visible_text):
     save_config(
         AppConfig(
             folder=str(tmp_path),
-            provider="ollama",
-            openwebui_api="chat",
+            provider="openwebui",
+            openwebui_api="proxy",
             openwebui_url=server[0],
             openwebui_model="glm-ocr:latest",
             api_token="test-only",

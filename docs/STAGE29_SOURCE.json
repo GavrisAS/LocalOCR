@@ -1,0 +1,144 @@
+{
+  "stage28_review_sha256": "46f9a4b7b6d9a64d2a023c4d879cac6f62dcd16f0cde851f351b852939d82317",
+  "stage28_source_sha256": "2347deb8ea64d1072073bb9f3a92ed248f82b33d6797f1abe316009a2569e3e2",
+  "base_origin_main": "77e2aa349425bbea5d6c3014f48998cdc4be9710",
+  "product_files": [
+    {
+      "path": "src/localocr/__init__.py",
+      "stage28_sha256": "b960f44e7ea8c52768abfce7422cdc5644fc4ddf47fce6f96339deea9a613f18",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/__main__.py",
+      "stage28_sha256": "5075c63e7743b0ae9e99a77e3d995f1017fdc1bf2b2fb6e8bedd59afa6f75c23",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/cli.py",
+      "stage28_sha256": "4fde34155e8e55dbf5802abec1323b138fc68b5f2728eb48af38e263938f7e64",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/config.py",
+      "stage28_sha256": "cd44ebb32f77ce77ef88377e970108842aefea9db014d88c39835b664c17e4a0",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/devices.py",
+      "stage28_sha256": "4b55e7265cc0a328f7bd05663b2a544f588846b275289b60b32753a2b7d4ef95",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/domain.py",
+      "stage28_sha256": "638f1dd23f7a0794397640f3b4248b89be68eb332fe3050f20d9c64a6c77bf20",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/embedded.py",
+      "stage28_sha256": "8fd8a38cf799a4b008241e74fc93a09680154004cd2a13487b52d21e9e4b84a0",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/excel.py",
+      "stage28_sha256": "497b295f3ab5afb31316f1e0222c555707df91a53886c8a05c393e2a22b563bd",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/failsoft.py",
+      "stage28_sha256": "f5fe9b0aa6fbbfd151428ac98d03eb52233e141b05e35743d954c971f72fe942",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/gui/__init__.py",
+      "stage28_sha256": "b5366c77c6692eaff8929f643cada23a9d56df1b77dc7add60c24dc1f38f1183",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/gui/app.py",
+      "stage28_sha256": "2086ec5c91f96afa084b098fd5c90cb95664fed2a3a5487bc97ded413c7d78c9",
+      "equal_to_stage28": false
+    },
+    {
+      "path": "src/localocr/imaging.py",
+      "stage28_sha256": "e80aea4730ab50916555d36f4ff5f5406551f5e8511856ea527b1a395fe6c070",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/journal.py",
+      "stage28_sha256": "e03d083f5c37d9eaffed9e1924a447409b2d042a9132a490f085b84a861fa295",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/network.py",
+      "stage28_sha256": "46609feddfdc71d779bdc227545df8023a08b77b5f7f2678e26240a9f3b51489",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/ollama.py",
+      "stage28_sha256": "e33f1eb74d9a61f37ff11247efa6d5e9da154218fe2e14b6dc1f70cc59ba6e5b",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/postprocess.py",
+      "stage28_sha256": "0eba069512e88ff0457f34e259dade43e54c28849a07f701c367d725f4936ff2",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/providers.py",
+      "stage28_sha256": "41de52c5c580d2e5feb576f284f76059471ec73ed1be7c848c99ef3a4cac2da8",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/quality.py",
+      "stage28_sha256": "6a07fb57eeedf6a1c4b2a2470eecdac94c868c4bf944edadb2c2c3489a7f54ef",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/reconstruction.py",
+      "stage28_sha256": "6b6145a9ef88139ad4a64a68186de386f82bf9c3a131ae8a75b546f813f6440d",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/runtime.py",
+      "stage28_sha256": "921d520ca63d2c21503ba9cda2b612db426171b6540515f7b2e81e6cd7c305f3",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/service.py",
+      "stage28_sha256": "67694094758becc61fc4dee9af6c29813b81850c86fe3355f5cf082cd60d4fb3",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/supervisor.py",
+      "stage28_sha256": "1aa70b0bc4460f022ab3e09c9172f1d87eb31448eb9e5444fe75f76bc707cd4e",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/synthetic.py",
+      "stage28_sha256": "b022fda6efc1c3e3e08c61cc5760f04f90861be3259430a944fc997c9c2f68ca",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/tables.py",
+      "stage28_sha256": "b5f1230ae604c86d404170e99d2f3b6e36f17a4ed12fc51aba883919235f0941",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/versioning.py",
+      "stage28_sha256": "9d8436e44a9ed301e0b01439d94bd0f3f53a52844e81520c7cafabe317711ce1",
+      "equal_to_stage28": true
+    },
+    {
+      "path": "src/localocr/windows_job.py",
+      "stage28_sha256": "10b5d980556dd593b7bcc7142dcd031372dfc40a0da5a71035ebffc8a89fb14f",
+      "equal_to_stage28": true
+    }
+  ],
+  "runtime_changes_from_stage28": [
+    "GUI settings entry, selected Direct Ollama in compact server mode, optional empty OpenWebUI token"
+  ],
+  "lockfile_sha256": "00d10e333508703ddb0abe776672c36c5945d4e372a2257ac37e20210e9b27a5",
+  "research_not_imported": true,
+  "fault_helper_relocation": "research/stage27_fault_worker.py -> tests/helpers/stage27_fault_worker.py; assertions unchanged",
+  "source_suite_scope": "All origin/main tests + Stage28 product tests; historical research tests stay in Stage28 snapshot, separately replayed 604 PASS."
+}

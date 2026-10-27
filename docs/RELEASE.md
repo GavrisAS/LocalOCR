@@ -42,3 +42,23 @@ Portable settings: оба GUI smoke обязательны (`--smoke-test` и
 config создаётся при первом запуске, обновление ZIP не перезаписывает пользовательский
 файл. Общий runtime root находится рядом с GUI EXE, включая вложенный CLI.
 Не менять immutable MAJOR.MINOR reservation/rerun и Windows F16 qualification gates.
+
+## Stage 2.9 Windows evaluation
+
+`CI` workflow_dispatch on a feature branch adds a blocking Windows onedir build
+with synthetic version 0.0 (never a reservation or release). Both source matrix jobs
+must pass first. Main push keeps immutable remote vMAJOR.MINOR reservation and uses
+that exact version/SHA. The same build script runs frozen simple/full startup,
+loopback multimodal fail-soft/readback/no-content/resume/no-overwrite, late cancel
+and relocated Unicode portable-root checks before packaging and release creation.
+Source Windows tests independently exercise parser/writer crashes/deadlines and
+nested owned Job cleanup; they are not frozen GUI interaction qualification.
+Published Lite is downloaded and these gates are rerun. GUI manual acceptance,
+real owner OpenWebUI and Embedded Windows remain pending; production NO_GO.
+
+Pinned F16 qualification is optional and resource intensive. It runs only when
+repository variable LOCALOCR_QUALIFY_F16 is exactly 'true', on attempt 1; the
+existing real Windows F16 gates and pins are unchanged. With no opt-in, Lite builds
+without downloading models/engines; Embedded runtime and weights are absent.
+No privacy/permission settings are changed. Owner explicitly authorized the existing
+public GavrisAS/LocalOCR repository for the Stage 2.9 evaluation on 2026-10-27.

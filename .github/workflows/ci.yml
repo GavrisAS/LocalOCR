@@ -12,6 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+    timeout-minutes: 20
     runs-on: ${{ matrix.os }}
     env:
       QT_QPA_PLATFORM: offscreen
@@ -34,3 +35,31 @@ jobs:
         with:
           name: tests-${{ matrix.os }}-attempt-${{ github.run_attempt }}
           path: test-results.xml
+
+  windows-validation:
+    if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+    needs: checks
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.13.0'
+      - run: uv python install 3.14
+      - name: Build and mandatory frozen Lite gates (no tag / release)
+        shell: pwsh
+        run: ./scripts/build_windows.ps1 -BuildVersion '0.0' -Validation
+      - name: Exact validation manifest
+        run: uv run python scripts/release_manifest.py --folder dist --tag v0.0 --sha '${{ github.sha }}'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-evaluation-validation-attempt-${{ github.run_attempt }}
+          path: |
+            dist/evaluation-gates.json
+            dist/*windows-x64.zip
+            dist/*.sha256
+            dist/release-manifest.json

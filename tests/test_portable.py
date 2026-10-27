@@ -97,6 +97,7 @@ def test_manifest_release_rerun_exact_assets(tmp_path, monkeypatch):
     verifier = load("verify_release")
     name = "LocalOCR-v1.0-windows-x64.zip"
     with zipfile.ZipFile(tmp_path / name, "w") as bundle:
+        bundle.writestr("LocalOCR/START_HERE_RU.md", b"synthetic instructions")
         bundle.writestr("LocalOCR/LocalOCR.exe", b"synthetic")
         bundle.writestr("LocalOCR/LocalOCR-CLI/LocalOCR-CLI.exe", b"synthetic")
     digest = hashlib.sha256((tmp_path / name).read_bytes()).hexdigest()

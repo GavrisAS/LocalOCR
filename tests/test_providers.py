@@ -267,3 +267,17 @@ def test_chat_single_table_stops_at_closed_table(monkeypatch):
     assert parse_response(result).tables[0].cells[0].text == "0012"
     client.recognize(b"image", single_table=False)
     assert "stop" not in requests[-1]
+
+
+@pytest.mark.parametrize("api", ["chat", "proxy"])
+def test_missing_token_reaches_server_auth_failure(server, api):
+    # An absent optional token must not build an illegal "Bearer " HTTP header.
+    url, state = server
+    state["status"] = 401
+    client = create_provider(OpenWebUISettings(url=url, api=api, api_token="", retries=0))
+    try:
+        with pytest.raises(OCRServerError, match="401"):
+            client.doctor()
+        assert len(state["requests"]) == 1
+    finally:
+        client.close()

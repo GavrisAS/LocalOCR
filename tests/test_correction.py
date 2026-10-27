@@ -57,6 +57,7 @@ def test_release_contract(tmp_path):
     spec.loader.exec_module(module)
     name = "LocalOCR-v0.5-windows-x64.zip"
     with zipfile.ZipFile(tmp_path / name, "w") as archive:
+        archive.writestr("LocalOCR/START_HERE_RU.md", b"synthetic instructions")
         archive.writestr("LocalOCR/LocalOCR.exe", b"synthetic")
         archive.writestr("LocalOCR/LocalOCR-CLI/LocalOCR-CLI.exe", b"synthetic")
     digest = hashlib.sha256((tmp_path / name).read_bytes()).hexdigest()
@@ -144,6 +145,7 @@ def test_release_rejections(tmp_path, case):
     spec.loader.exec_module(module)
     name = "LocalOCR-v0.5-windows-x64.zip"
     with zipfile.ZipFile(tmp_path / name, "w") as archive:
+        archive.writestr("LocalOCR/START_HERE_RU.md", b"synthetic instructions")
         archive.writestr("LocalOCR/LocalOCR.exe", b"synthetic")
         if case != "zip":
             archive.writestr("LocalOCR/LocalOCR-CLI/LocalOCR-CLI.exe", b"synthetic")
@@ -217,7 +219,9 @@ def test_technical_success_with_wrong_ocr(server, tmp_path):
     path = tmp_path / "synthetic.png"
     image.save(path)
     result = convert(path, Settings(url=server[0]))[0]
-    assert result.status == "SUCCESS"
+    assert result.status == "REVIEW"
+    assert result.verified_anchors == 0
+    assert result.unverified_content > 0
     assert result.output is not None
     actual = export(Path(result.output))
     gold = template(2, 2)

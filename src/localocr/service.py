@@ -1,7 +1,6 @@
 """Shared single/batch pipeline. No Qt, agent tools or cloud dependencies."""
 
 import hashlib
-import json
 import logging
 import time
 import traceback
@@ -11,21 +10,19 @@ from dataclasses import asdict, replace
 from pathlib import Path
 from threading import Event
 
-from localocr.domain import JobResult, StructureError, Table, TableDocument, ValidationIssue
+from localocr.domain import JobResult, StructureError, Table
 from localocr.embedded import EmbeddedSettings
 from localocr.excel import write_workbook
 from localocr.imaging import (
     EXTENSIONS,
     Layout,
-    detect_layout,
-    encode,
-    has_visible_text,
     load_image,
-    row_fragments,
 )
+from localocr.journal import Journal, atomic_json, file_hash, settings_identity
 from localocr.ollama import Cancelled, OCRServerError, Settings
-from localocr.providers import OCRProvider, OpenWebUISettings, create_provider
-from localocr.tables import parse_response
+from localocr.providers import OpenWebUISettings, create_provider
+from localocr.reconstruction import recognize_document
+from localocr.runtime import portable_root
 
 LOGGER = logging.getLogger(__name__)
 Progress = Callable[[int, int, str], None]
@@ -121,510 +118,10 @@ def assemble_fragments(parts: list[tuple[int, int, Table]], layout: Layout) -> T
     return table
 
 
-def _table_row_signatures(table: Table) -> list[tuple]:
-    grid = table.grid()
-    return [
-        tuple(
-            (
-                grid[row, column].text,
-                grid[row, column].row == row,
-                grid[row, column].rowspan,
-                grid[row, column].colspan,
-            )
-            for column in range(table.columns)
-        )
-        for row in range(table.rows)
-    ]
-
-
 def stitch_unstructured(parts: list[tuple[int, int, Table]]) -> Table:
-    if not parts:
-        raise StructureError("Не получены пригодные OCR-фрагменты страницы")
-    first = parts[0][2]
-    cells = [replace(cell) for cell in first.cells]
-    rows = first.rows
-    columns = first.columns
-    for _, _, part in parts[1:]:
-        if part.columns != columns:
-            raise StructureError("Число столбцов различается в перекрывающихся фрагментах")
-        existing = Table(cells, rows, columns)
-        previous_signatures = _table_row_signatures(existing)
-        next_signatures = _table_row_signatures(part)
-        overlaps = [
-            count
-            for count in range(1, min(len(previous_signatures), len(next_signatures)) + 1)
-            if previous_signatures[-count:] == next_signatures[:count]
-        ]
-        if len(overlaps) != 1 or overlaps[0] == len(next_signatures):
-            raise StructureError("Не удалось однозначно сопоставить строки перекрытия фрагментов")
-        overlap = overlaps[0]
-        offset = rows - overlap
-        existing_grid = existing.grid()
-        for cell in part.cells:
-            mapped = replace(cell, row=cell.row + offset)
-            if mapped.row < rows:
-                previous = existing_grid.get((mapped.row, mapped.column))
-                if previous is None or (
-                    previous.row,
-                    previous.column,
-                    previous.text,
-                    previous.rowspan,
-                    previous.colspan,
-                    previous.is_header,
-                ) != (
-                    mapped.row,
-                    mapped.column,
-                    mapped.text,
-                    mapped.rowspan,
-                    mapped.colspan,
-                    mapped.is_header,
-                ):
-                    raise StructureError("Конфликт OCR в перекрытии фрагментов страницы")
-            else:
-                cells.append(mapped)
-        rows += part.rows - overlap
-    result = Table(cells, rows, columns)
-    result.grid()
-    result.issues.append(
-        ValidationIssue(
-            "GEOMETRY_UNKNOWN",
-            "Строки объединены по совпадающему OCR-перекрытию; положение столбцов требует проверки",
-        )
+    raise StructureError(
+        "Не удалось однозначно сопоставить строки: нужны координаты; совпадение текста не доказывает положение"
     )
-    return result
-
-
-def recognize_document(
-    image, client: OCRProvider, diagnostics: Path | None, source_name: str | None = None
-):
-    layouts = detect_layout(image)
-    sequence = 0
-    active_stage = "layout"
-    started = time.monotonic()
-    settings = getattr(client, "settings", None)
-    embedded = getattr(client, "embedded", None)
-    requests: list[dict[str, object]] = []
-    events: list[dict[str, object]] = []
-    trace: dict[str, object] = {
-        "schema_version": 1,
-        "source": source_name,
-        "image": {"width": image.width, "height": image.height},
-        "provider": {
-            "server": getattr(client, "server_name", type(client).__name__),
-            "model": (
-                f"Embedded {embedded.precision.upper()}"
-                if embedded is not None
-                else getattr(settings, "model", None)
-            ),
-            "generation": {
-                "num_predict": getattr(settings, "num_predict", None),
-                "context_size": getattr(embedded, "ctx_size", 32768),
-                "temperature": 0,
-                "seed": 0,
-            },
-        },
-        "layouts": [
-            {
-                "region": layout.region,
-                "xs": layout.xs,
-                "ys": layout.ys,
-                "confidence": layout.confidence,
-                "safe_row_boundaries": layout.safe_rows,
-            }
-            for layout in layouts
-        ],
-        "requests": requests,
-        "events": events,
-    }
-
-    def save_diagnostics(status, error=None, document=None):
-        if diagnostics is None:
-            return
-        diagnostics.mkdir(parents=True, exist_ok=True)
-        trace["status"] = status
-        trace["request_count"] = len(requests)
-        trace["retry_count"] = sum(bool(record.get("retry")) for record in requests)
-        trace["duration_seconds"] = round(time.monotonic() - started, 3)
-        if error is not None:
-            trace["failure"] = {
-                "stage": active_stage,
-                "type": type(error).__name__,
-                "message": str(error)[:500],
-                "provider": getattr(error, "diagnostics", {}),
-            }
-        if document is not None:
-            trace["table_results"] = [
-                {
-                    "shape": [table.rows, table.columns],
-                    "issue_codes": [issue.code for issue in table.issues],
-                    "cell_warning_count": sum(bool(cell.warnings) for cell in table.cells),
-                }
-                for table in document.tables
-            ]
-        (diagnostics / "run.json").write_text(
-            json.dumps(trace, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        if document is not None:
-            (diagnostics / "observations.json").write_text(
-                json.dumps(
-                    {
-                        "schema_version": 1,
-                        "tables": [
-                            {
-                                "rows": table.rows,
-                                "columns": table.columns,
-                                "cells": [
-                                    {
-                                        "row": cell.row,
-                                        "column": cell.column,
-                                        "rowspan": cell.rowspan,
-                                        "colspan": cell.colspan,
-                                        "text": cell.text,
-                                    }
-                                    for cell in table.cells
-                                ],
-                            }
-                            for table in document.tables
-                        ],
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-
-    def recognize(crop, single_table=True, region=None, route="whole-table", retry=False):
-        nonlocal sequence
-        client.check_cancel()
-        sequence += 1
-        started = time.monotonic()
-        record: dict[str, object] = {
-            "request": sequence,
-            "route": route,
-            "retry": retry,
-            "region": region,
-            "single_table": single_table,
-            "started": time.time(),
-        }
-        try:
-            text = client.recognize(encode(crop), single_table=single_table)
-            record.update(getattr(client, "last_diagnostic", {}))
-            record["response_length"] = record.get("response_length", len(text))
-            record["status"] = "RESPONSE"
-            if diagnostics is not None:
-                diagnostics.mkdir(parents=True, exist_ok=True)
-                (diagnostics / f"response-{sequence}.txt").write_text(text, encoding="utf-8")
-            try:
-                document = parse_response(text)
-            except StructureError as error:
-                record.update({"status": "PARSER_OR_VALIDATION_ERROR", "error": str(error)[:500]})
-                raise
-            record["tables"] = len(document.tables)
-            record["shapes"] = [[table.rows, table.columns] for table in document.tables]
-            return document
-        except Exception as error:
-            record.update(
-                {
-                    "status": record.get("status", "PROVIDER_ERROR"),
-                    "error_type": type(error).__name__,
-                    "error": str(error)[:500],
-                    "provider": getattr(error, "diagnostics", {})
-                    or getattr(client, "last_diagnostic", {}),
-                }
-            )
-            raise
-        finally:
-            record["seconds"] = round(time.monotonic() - started, 3)
-            requests.append(record)
-
-    try:
-        if not layouts:
-            active_stage = "whole-page OCR"
-            if not has_visible_text(image):
-                raise StructureError("Недостаточно видимого текста для подтверждения таблицы")
-            max_height = max(600, min(1800, 10_000_000 // max(1, image.width)))
-            overlap = max(80, min(240, max_height // 8))
-
-            def read_page(top, bottom, depth=0, budget=None, force_split=False, retry=False):
-                if budget is None:
-                    budget = [48]
-                if budget[0] <= 0:
-                    raise StructureError("Исчерпан лимит повторного OCR страницы (48 запросов)")
-
-                def split_page(error):
-                    if depth >= 6 or bottom - top <= max(240, overlap * 2):
-                        raise error
-                    middle = (top + bottom) // 2
-                    context = max(40, min(overlap, (bottom - top) // 8))
-                    left_end = min(bottom, middle + context)
-                    right_start = max(top, middle - context)
-                    if left_end >= bottom or right_start <= top:
-                        raise error
-                    return read_page(top, left_end, depth + 1, budget, retry=True) + read_page(
-                        right_start, bottom, depth + 1, budget, retry=True
-                    )
-
-                if force_split and bottom - top > max(240, overlap * 2):
-                    return split_page(StructureError("Сбой OCR страницы требует меньших регионов"))
-                budget[0] -= 1
-                try:
-                    document = recognize(
-                        image.crop((0, top, image.width, bottom)),
-                        single_table=False,
-                        region=(0, top, image.width, bottom),
-                        route="adaptive-page-fragment",
-                        retry=retry,
-                    )
-                    if len(document.tables) != 1:
-                        raise StructureError("Внутри фрагмента найдено несколько таблиц")
-                    if document.tables[0].columns < 2:
-                        raise StructureError(
-                            "Без сетки нельзя подтвердить положение единственного столбца"
-                        )
-                    return [(top, bottom, document.tables[0])]
-                except (StructureError, OCRServerError) as error:
-                    events.append(
-                        {
-                            "stage": "adaptive page fragmentation",
-                            "region": (0, top, image.width, bottom),
-                            "type": type(error).__name__,
-                            "message": str(error)[:500],
-                        }
-                    )
-                    return split_page(error)
-
-            force_page_split = False
-            if image.height <= max_height:
-                try:
-                    document = recognize(
-                        image,
-                        single_table=False,
-                        region=(0, 0, image.width, image.height),
-                        route="whole-page",
-                    )
-                    if any(table.rows < 2 or table.columns < 2 for table in document.tables):
-                        raise StructureError(
-                            "Без сетки недостаточно повторяющейся структуры строк и столбцов"
-                        )
-                    for table in document.tables:
-                        table.issues.append(
-                            ValidationIssue(
-                                "GEOMETRY_UNKNOWN",
-                                "Нет надёжных линий: полнота и положение ячеек требуют визуальной проверки",
-                            )
-                        )
-                    save_diagnostics("REVIEW", document=document)
-                    return document
-                except (StructureError, OCRServerError) as error:
-                    active_stage = "adaptive page fragmentation"
-                    force_page_split = True
-                    events.append(
-                        {
-                            "stage": "whole-page OCR",
-                            "region": (0, 0, image.width, image.height),
-                            "type": type(error).__name__,
-                            "message": str(error)[:500],
-                        }
-                    )
-            else:
-                active_stage = "adaptive page fragmentation"
-            parts = []
-            top = 0
-            budget = [48]
-            while top < image.height:
-                bottom = min(image.height, top + max_height)
-                parts.extend(read_page(top, bottom, budget=budget, force_split=force_page_split))
-                if bottom == image.height:
-                    break
-                top = max(top + 1, bottom - overlap)
-            table = stitch_unstructured(parts)
-            if table.rows < 2 or table.columns < 2:
-                raise StructureError(
-                    "Без сетки недостаточно повторяющейся структуры строк и столбцов"
-                )
-            document = TableDocument([table])
-            save_diagnostics("REVIEW", document=document)
-            return document
-
-        tables = []
-        for layout in layouts:
-            x, y, right, bottom = layout.region
-            table_region = (
-                max(0, x - 3),
-                max(0, y - 3),
-                min(image.width, right + 3),
-                min(image.height, bottom + 3),
-            )
-            table_attempted = False
-            try:
-                max_height = max(600, min(1800, 10_000_000 // max(1, right - x)))
-                if bottom - y > max_height:
-                    raise StructureError("Размер таблицы требует масштабной фрагментации")
-                active_stage = "whole-table OCR"
-                table_attempted = True
-                document = recognize(
-                    image.crop(table_region),
-                    region=table_region,
-                    route="whole-table",
-                )
-                if len(document.tables) != 1:
-                    raise StructureError("Число таблиц не соответствует геометрии")
-                active_stage = "geometry validation"
-                table = document.tables[0]
-                apply_geometry(table, layout)
-            except (StructureError, OCRServerError) as error:
-                events.append(
-                    {
-                        "stage": active_stage,
-                        "region": table_region,
-                        "type": type(error).__name__,
-                        "message": str(error)[:500],
-                    }
-                )
-                active_stage = "row-fragment OCR"
-                parts: list[tuple[int, int, Table]] = []
-                budget = [48]
-
-                def read_range(start, end, depth=0, retry=False):
-                    box = (
-                        max(0, x - 3),
-                        max(0, layout.ys[start] - 2),
-                        min(image.width, right + 3),
-                        min(image.height, layout.ys[end] + 3),
-                    )
-                    if budget[0] <= 0:
-                        raise StructureError("Исчерпан лимит повторного OCR таблицы (48 запросов)")
-                    budget[0] -= 1
-                    try:
-                        doc = recognize(
-                            image.crop(box),
-                            region=box,
-                            route="row-fragment",
-                            retry=retry or depth > 0 or table_attempted,
-                        )
-                        if len(doc.tables) != 1:
-                            raise StructureError("Неоднозначный OCR-фрагмент")
-                        part = doc.tables[0]
-                        if part.rows != end - start or part.columns != len(layout.xs) - 1:
-                            raise StructureError(
-                                f"OCR-фрагмент {part.rows}×{part.columns} не совпадает "
-                                f"с ожидаемой геометрией {end - start}×{len(layout.xs) - 1}"
-                            )
-                        return [(start, end, part)]
-                    except (StructureError, OCRServerError) as error:
-                        events.append(
-                            {
-                                "stage": "row-fragment validation",
-                                "region": box,
-                                "type": type(error).__name__,
-                                "message": str(error)[:500],
-                            }
-                        )
-                        if end - start <= 3 or depth >= 6:
-                            raise error
-                        interior = [
-                            boundary
-                            for boundary in (
-                                layout.safe_rows
-                                if layout.safe_rows is not None
-                                else range(start + 1, end)
-                            )
-                            if start < boundary < end
-                        ]
-                        if not interior:
-                            raise error
-                        middle = min(
-                            interior, key=lambda boundary: abs(boundary - (start + end) / 2)
-                        )
-                        left_end = min(
-                            (value for value in interior if value > middle), default=middle
-                        )
-                        right_start = max(
-                            (value for value in interior if value < middle), default=middle
-                        )
-                        return read_range(start, left_end, depth + 1) + read_range(
-                            right_start, end, depth + 1
-                        )
-
-                max_height = max(600, min(1800, 10_000_000 // max(1, right - x)))
-                for start, end in row_fragments(layout, max_height=max_height):
-                    parts.extend(read_range(start, end))
-                observations = {}
-                for start, end, part in parts:
-                    for cell in part.cells:
-                        observations.setdefault((start + cell.row, cell.column), []).append(cell)
-                for (row, column), observed in observations.items():
-                    signatures = {(cell.text, cell.rowspan, cell.colspan) for cell in observed}
-                    if len(signatures) < 2:
-                        continue
-                    spans = {(cell.rowspan, cell.colspan) for cell in observed}
-                    if len(spans) != 1:
-                        raise StructureError("Конфликт объединений в перекрытии фрагментов")
-                    rowspan, _ = next(iter(spans))
-                    first = read_range(row, row + rowspan, retry=True)
-                    second = read_range(row, row + rowspan, retry=True)
-                    if len(first) != 1 or len(second) != 1:
-                        raise StructureError("Неоднозначная локальная повторная проверка")
-                    candidates = []
-                    for checked in (first[0][2], second[0][2]):
-                        candidates.append(
-                            next(
-                                (
-                                    cell
-                                    for cell in checked.cells
-                                    if cell.row == 0 and cell.column == column
-                                ),
-                                None,
-                            )
-                        )
-                    if any(candidate is None for candidate in candidates):
-                        raise StructureError("Не найдено положение конфликтующей ячейки")
-                    first_cell, second_cell = candidates
-                    assert first_cell is not None and second_cell is not None
-                    candidate_signature = (
-                        first_cell.text,
-                        first_cell.rowspan,
-                        first_cell.colspan,
-                    )
-                    confirmed = (
-                        candidate_signature
-                        == (second_cell.text, second_cell.rowspan, second_cell.colspan)
-                        and candidate_signature in signatures
-                    )
-                    selected = first_cell.text if confirmed else observed[0].text
-                    alternatives = sorted(
-                        {cell.text for cell in observed} | {first_cell.text, second_cell.text}
-                    )
-                    message = (
-                        "REVIEW: подтверждено двумя локальными проверками"
-                        if confirmed
-                        else "REVIEW: текст неоднозначен; сохранено первое OCR-наблюдение"
-                    )
-                    message += "; альтернативы: " + " | ".join(alternatives)
-                    for cell in observed:
-                        cell.text = selected
-                        cell.warnings.append(message)
-                active_stage = "fragment assembly"
-                table = assemble_fragments(parts, layout)
-            if layout.confidence == "partial":
-                table.issues.append(
-                    ValidationIssue(
-                        "PARTIAL_GRID",
-                        "Часть линий таблицы подтверждена; положение ячеек требует проверки",
-                    )
-                )
-            tables.append(table)
-        document = TableDocument(tables)
-        status = (
-            "REVIEW"
-            if any(table.issues or any(cell.warnings for cell in table.cells) for table in tables)
-            else "SUCCESS"
-        )
-        save_diagnostics(status, document=document)
-        return document
-    except BaseException as error:
-        save_diagnostics("FAILED", error=error)
-        raise
 
 
 def convert(
@@ -638,6 +135,8 @@ def convert(
     progress: Progress | None = None,
     on_network_event=None,
     on_runtime_status=None,
+    fail_soft=False,
+    ocr_prompt=None,
 ) -> list[JobResult]:
     paths = discover(source, recursive)
     output_dir = output_dir or ((source if source.is_dir() else source.parent) / "results")
@@ -654,95 +153,438 @@ def convert(
     if on_runtime_status:
         client.on_runtime_status = on_runtime_status
     try:
-        client.doctor()
         output_dir.mkdir(parents=True, exist_ok=True)
-        results = []
-        for index, (path, name) in enumerate(zip(paths, output_names(paths))):
-            if cancel.is_set():
-                break
-            if progress:
-                progress(index, len(paths), path.name)
-            target = output_dir / name
-            start = time.monotonic()
+        with Journal(output_dir) as journal:
+            # Establish report/journal ownership before readiness; one batch failure,
+            # zero fake per-image OCR jobs for an unavailable route/model.
             try:
-                if target.exists() and not overwrite:
-                    result = JobResult(
-                        path.name, "SKIPPED", str(target), "Результат уже существует"
-                    )
-                else:
-                    from localocr.runtime import portable_root
-
-                    if isinstance(diagnostics, Path):
-                        diag = diagnostics / target.stem
-                    else:
-                        diag = (
-                            portable_root() / "diagnostics" / target.stem if diagnostics else None
-                        )
-                    image = load_image(path)
-                    document = recognize_document(image, client, diag, source_name=path.name)
-                    write_workbook(document, target, overwrite, cancel)
-                    warnings = sum(
-                        len(table.issues) + sum(len(c.warnings) for c in table.cells)
-                        for table in document.tables
-                    )
-                    review_codes = list(
-                        dict.fromkeys(
-                            [issue.code for table in document.tables for issue in table.issues]
-                            + [
-                                "OCR_OVERLAP_CONFLICT"
-                                for table in document.tables
-                                if any(cell.warnings for cell in table.cells)
-                            ]
-                        )
-                    )
-                    result = JobResult(
-                        path.name,
-                        "REVIEW" if warnings else "SUCCESS",
-                        str(target),
-                        message=("Требуется проверка: " + ", ".join(review_codes))
-                        if warnings
-                        else "",
-                        tables=len(document.tables),
-                        shapes=[(t.rows, t.columns) for t in document.tables],
-                        warnings=warnings,
-                    )
+                client.doctor()
             except Cancelled:
-                break
+                from localocr.failsoft import write_batch_summary
+
+                write_batch_summary(
+                    [],
+                    output_dir,
+                    len(paths),
+                    True,
+                    unique_inputs=None,
+                    batch={"status": "CANCELLED", "stage": "doctor", "not_started": len(paths)},
+                )
+                atomic_json(
+                    output_dir / f"report-{time.time_ns()}.json",
+                    {
+                        "batch": {
+                            "status": "CANCELLED",
+                            "stage": "doctor",
+                            "not_started": len(paths),
+                        },
+                        "results": [],
+                    },
+                )
+                return []
             except Exception as error:
-                # Exception details never contain raw image/OCR content in routine logs.
-                LOGGER.error(
-                    "Image processing failed: %s (%s)\n%s",
-                    path.name,
-                    type(error).__name__,
-                    "".join(traceback.format_tb(error.__traceback__)),
-                )
+                from localocr.failsoft import failure_code, write_batch_summary
+
+                code = failure_code(error, "doctor")
+                batch = {
+                    "status": "FAILED",
+                    "stage": "doctor",
+                    "code": code,
+                    "blocked": len(paths),
+                    "not_started": len(paths),
+                    "recovery": "Проверьте выбранный endpoint, token, model ID или Embedded engine; выполните doctor --use-config и повторите convert. Настройки и существующие XLSX сохранены.",
+                }
                 result = JobResult(
-                    path.name,
+                    "BATCH",
                     "FAILED",
-                    message=str(error)
-                    if isinstance(error, (ValueError, OCRServerError, OSError))
-                    else "Ошибка обработки; см. локальный лог",
+                    message="doctor: " + code + ". " + batch["recovery"],
+                    error_codes=[code],
+                    batch_level=True,
                 )
-            result.seconds = round(time.monotonic() - start, 3)
-            results.append(result)
-            LOGGER.info(
-                "%s: %s tables=%s shapes=%s warnings=%s seconds=%s",
-                path.name,
-                result.status,
-                result.tables,
-                result.shapes,
-                result.warnings,
-                result.seconds,
-            )
-            if progress:
-                progress(index + 1, len(paths), f"{path.name}: {result.status}")
-        report = {
-            "cancelled": cancel.is_set(),
-            "discovered": len(paths),
-            "results": [asdict(result) for result in results],
-        }
-        report_path = output_dir / f"report-{time.time_ns()}.json"
-        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-        return results
+                write_batch_summary(
+                    [result], output_dir, len(paths), False, unique_inputs=None, batch=batch
+                )
+                atomic_json(
+                    output_dir / f"report-{time.time_ns()}.json",
+                    {"batch": batch, "results": [asdict(result)]},
+                )
+                if progress:
+                    progress(0, len(paths), result.message)
+                return [result]
+            results = []
+            identity = settings_identity(settings, client)
+            if fail_soft:
+                from localocr.failsoft import VERSION, selected_prompt
+
+                ocr_prompt = ocr_prompt or selected_prompt(settings)
+                identity["pipeline"] += "/" + VERSION + "/literal-xlsx-1"
+                identity["settings"] = {
+                    **identity["settings"],
+                    "fail_soft": True,
+                    "ocr_prompt": ocr_prompt,
+                }
+            source_hashes = set()
+            missing_identity = False
+            for index, (path, name) in enumerate(zip(paths, output_names(paths))):
+                if cancel.is_set():
+                    break
+                if progress:
+                    progress(index, len(paths), path.name)
+                target = output_dir / name
+                start = time.monotonic()
+                key = None
+                published_hash = None
+                fingerprint = {}
+                attempts = 0
+                stage = "fingerprint"
+                before_http = getattr(client, "http_ocr_calls", 0)
+                try:
+                    key, fingerprint = journal.key(path, identity)
+                    source_hashes.add(fingerprint["source_hash"])
+                    # A changed model/settings fingerprint owns a different output;
+                    # preserve the old workbook and any user-created target.
+                    owned = any(
+                        e.get("output") == str(target.resolve()) and e.get("key") != key
+                        for e in journal.records.values()
+                    )
+                    if owned and not overwrite:
+                        target = target.with_name(target.stem + "_" + key[:10] + target.suffix)
+                    cached = (
+                        journal.completed(key, target) if identity["model"].get("digest") else None
+                    )
+                    attempts = journal.records.get(key, {}).get("attempts", 0) + 1
+                    if cached and not overwrite:
+                        previous = cached.get("result", {})
+                        evidence = {
+                            key: previous.get(key, 0)
+                            for key in (
+                                "tables",
+                                "warnings",
+                                "recognized_anchors",
+                                "verified_anchors",
+                                "unresolved_anchors",
+                                "unresolved_regions",
+                                "unverified_content",
+                                "xlsx_with_data",
+                                "table_structured",
+                                "partial_text_salvage",
+                                "nonempty_data_cells",
+                                "partial_structured",
+                                "diagnostic_only",
+                                "no_content",
+                            )
+                        }
+                        result = JobResult(
+                            path.name,
+                            cached["status"],
+                            str(target),
+                            "Возобновлено без OCR; сохранён статус "
+                            + cached["status"]
+                            + ". "
+                            + previous.get("message", ""),
+                            shapes=[tuple(shape) for shape in previous.get("shapes", [])],
+                            error_codes=previous.get("error_codes", []),
+                            resumed=True,
+                            **evidence,
+                        )
+                    elif target.exists() and not overwrite:
+                        result = JobResult(
+                            path.name,
+                            "SKIPPED",
+                            str(target),
+                            "Результат существует; fingerprint не подтверждён. Для обработки: --overwrite",
+                        )
+                    else:
+                        journal.append(
+                            {
+                                "key": key,
+                                **fingerprint,
+                                "status": "RUNNING",
+                                "attempts": attempts,
+                                "output": str(target.resolve()),
+                            }
+                        )
+                        if isinstance(diagnostics, Path):
+                            diag = diagnostics / target.stem
+                        else:
+                            diag = (
+                                portable_root() / "diagnostics" / target.stem
+                                if diagnostics
+                                else None
+                            )
+                        loaded = time.monotonic()
+                        stage = "load"
+                        image = load_image(path)
+                        stage = "ocr"
+                        load_seconds = time.monotonic() - loaded
+                        if fail_soft:
+                            from localocr.failsoft import recognize_failsoft
+
+                            raw, truncated = recognize_failsoft(
+                                image,
+                                client,
+                                diag,
+                                source_name=path.name,
+                                prompt=ocr_prompt,
+                                raw_only=True,
+                            )
+                        else:
+                            document = recognize_document(
+                                image, client, diag, source_name=path.name
+                            )
+                        if fail_soft and isinstance(settings, EmbeddedSettings):
+                            actual_backend = getattr(
+                                getattr(client, "active_candidate", None), "backend", None
+                            )
+                            if actual_backend != identity["model"].get("active_backend"):
+                                # Never publish/cache a response under another backend identity.
+                                raise OCRServerError("BACKEND_CHANGED")
+                        if file_hash(path) != fingerprint["source_hash"]:
+                            raise ValueError(
+                                "Источник изменился во время OCR; результат не опубликован"
+                            )
+                        expected_digest = identity["model"].get("digest")
+                        if (
+                            expected_digest
+                            and isinstance(settings, (Settings, OpenWebUISettings))
+                            and getattr(settings, "api", "proxy") != "chat"
+                        ):
+                            client.doctor()
+                            if (
+                                getattr(client, "model_identity", {}).get("digest")
+                                != expected_digest
+                            ):
+                                raise ValueError(
+                                    "Digest модели изменился во время OCR; результат не опубликован"
+                                )
+                        stage = "xlsx"
+                        writing = time.monotonic()
+                        if fail_soft:
+                            from localocr.postprocess import convert_raw
+
+                            def verify_source():
+                                if file_hash(path) != fingerprint["source_hash"]:
+                                    raise ValueError("SOURCE_CHANGED")
+
+                            metadata = convert_raw(
+                                raw,
+                                target,
+                                truncated=truncated,
+                                normalization=image.info.get("localocr_normalization", {}),
+                                overwrite=overwrite,
+                                cancel=cancel,
+                                before_publish=verify_source,
+                            )
+                        else:
+                            write_workbook(document, target, overwrite, cancel)
+                        published_hash = file_hash(target)
+                        if fail_soft:
+                            outcome = metadata["outcome"]
+                            metrics = getattr(client, "last_run_metrics", {})
+                            result = JobResult(
+                                path.name,
+                                outcome.pop("status"),
+                                str(target),
+                                tables=metadata["tables"],
+                                shapes=[tuple(v) for v in metadata["shapes"]],
+                                calls=metrics.get("calls", 0),
+                                http_attempts=metrics.get("http_attempts", 0),
+                                child_peak_rss_kib=metadata.get("child_peak_rss_kib"),
+                                **outcome,
+                                stage_seconds={
+                                    **metadata["stage_seconds"],
+                                    "load": load_seconds,
+                                    "recognize": metrics.get("seconds", 0),
+                                },
+                            )
+                        else:
+                            warnings = len(document.issues) + sum(
+                                len(table.issues) + sum(len(c.warnings) for c in table.cells)
+                                for table in document.tables
+                            )
+                            review_codes = list(
+                                dict.fromkeys(
+                                    [issue.code for issue in document.issues]
+                                    + [
+                                        issue.code
+                                        for table in document.tables
+                                        for issue in table.issues
+                                    ]
+                                )
+                            )
+                            outcome = document.outcome()
+                            metrics = getattr(client, "last_run_metrics", {})
+                            result = JobResult(
+                                path.name,
+                                outcome.pop("status"),
+                                str(target),
+                                message="Требуется проверка: " + ", ".join(review_codes)
+                                if warnings
+                                else "",
+                                tables=len(document.tables),
+                                shapes=[(t.rows, t.columns) for t in document.tables],
+                                warnings=warnings,
+                                calls=metrics.get("calls", 0),
+                                http_attempts=metrics.get("http_attempts", 0),
+                                **outcome,
+                                stage_seconds={
+                                    **metrics.get("stage_seconds", {}),
+                                    "load": round(load_seconds, 4),
+                                    "recognize": round(metrics.get("seconds", 0), 4),
+                                    "write": round(time.monotonic() - writing, 4),
+                                },
+                            )
+                except Cancelled:
+                    if key is not None:
+                        journal.append(
+                            {"key": key, **fingerprint, "status": "CANCELLED", "attempts": attempts}
+                        )
+                    if fail_soft:
+                        results.append(
+                            JobResult(
+                                path.name,
+                                "CANCELLED",
+                                error_codes=["CANCELLED"],
+                                calls=int(
+                                    getattr(client, "http_ocr_calls", before_http) > before_http
+                                ),
+                                ocr_calls=int(
+                                    getattr(client, "http_ocr_calls", before_http) > before_http
+                                ),
+                                http_attempts=getattr(client, "http_ocr_calls", before_http)
+                                - before_http,
+                                provider=type(settings).__name__,
+                                model_id=getattr(settings, "model", "embedded-glm-ocr"),
+                                model_digest=identity["model"].get("digest"),
+                                backend=identity["backend"],
+                                pipeline_version=identity["pipeline"],
+                                seconds=round(time.monotonic() - start, 3),
+                            )
+                        )
+                    break
+                except Exception as error:
+                    LOGGER.error(
+                        "Image processing failed: %s (%s)\n%s",
+                        path.name,
+                        type(error).__name__,
+                        "".join(traceback.format_tb(error.__traceback__)),
+                    )
+                    if fail_soft:
+                        from localocr.failsoft import failure_code
+
+                        if key is None:
+                            missing_identity = True
+                            # A vanished/unreadable input still needs a terminal record;
+                            # no unavailable source identity can become a completed cache hit.
+                            fingerprint = {
+                                "source_path": str(path.resolve()),
+                                "source_hash": None,
+                                "identity": identity,
+                                "source_unavailable": True,
+                            }
+                            key = hashlib.sha256(repr(fingerprint).encode()).hexdigest()
+                        code = failure_code(error, stage)
+                        process = getattr(client, "process", None)
+                        crashed = code == "WORKER_CRASH" or (
+                            process is not None and process.poll() is not None
+                        )
+                        codes = list(dict.fromkeys([code] + (["WORKER_CRASH"] if crashed else [])))
+                        # No raw model/server exception strings in public job metadata.
+                        result = JobResult(
+                            path.name,
+                            "FAILED",
+                            message=code,
+                            error_codes=codes,
+                            no_content=code == "NO_CONTENT",
+                            timeout=code in {"TIMEOUT", "PARSER_TIMEOUT", "WRITER_TIMEOUT"},
+                            worker_crashed=crashed,
+                            calls=int(getattr(client, "http_ocr_calls", before_http) > before_http),
+                            http_attempts=getattr(client, "http_ocr_calls", before_http)
+                            - before_http,
+                        )
+                        if isinstance(settings, EmbeddedSettings):
+                            client.close()
+                        try:
+                            errors_dir = portable_root() / "diagnostics" / "failures"
+                            errors_dir.mkdir(parents=True, exist_ok=True)
+                            atomic_json(
+                                errors_dir
+                                / (
+                                    (key or hashlib.sha256(str(path).encode()).hexdigest())
+                                    + ".json"
+                                ),
+                                {
+                                    "status": "FAILED",
+                                    "error_codes": codes,
+                                    "stage": stage,
+                                    "error_type": type(error).__name__,
+                                },
+                            )
+                        except OSError:
+                            LOGGER.error("Diagnostic sidecar IO_FAILURE")
+                    else:
+                        result = JobResult(
+                            path.name,
+                            "FAILED",
+                            message=str(error)
+                            if isinstance(error, (ValueError, OCRServerError, OSError))
+                            else "Ошибка обработки; см. локальный лог",
+                        )
+                if fail_soft:
+                    result.ocr_calls = result.calls
+                    result.provider = type(settings).__name__
+                    result.model_id = getattr(settings, "model", "embedded-glm-ocr")
+                    result.model_digest = identity["model"].get("digest")
+                    actual_backend = getattr(
+                        getattr(client, "active_candidate", None), "backend", None
+                    )
+                    result.backend = identity["backend"] + (
+                        "/" + actual_backend if actual_backend else ""
+                    )
+                    result.pipeline_version = identity["pipeline"]
+                result.seconds = round(time.monotonic() - start, 3)
+                results.append(result)
+                if key is not None and result.status != "SKIPPED" and not result.resumed:
+                    journal.append(
+                        {
+                            "key": key,
+                            **fingerprint,
+                            "status": result.status,
+                            "attempts": attempts,
+                            "latency": result.seconds,
+                            "output": str(target.resolve()) if result.output else None,
+                            "output_hash": published_hash if result.output else None,
+                            "result": asdict(result),
+                        }
+                    )
+                LOGGER.info(
+                    "%s: %s tables=%s seconds=%s",
+                    path.name,
+                    result.status,
+                    result.tables,
+                    result.seconds,
+                )
+                if progress:
+                    progress(index + 1, len(paths), f"{path.name}: {result.status}")
+            report = {
+                "cancelled": cancel.is_set(),
+                "discovered": len(paths),
+                "resumed": sum(result.resumed for result in results),
+                "results": [asdict(result) for result in results],
+            }
+            atomic_json(output_dir / f"report-{time.time_ns()}.json", report)
+            if fail_soft:
+                from localocr.failsoft import write_batch_summary
+
+                write_batch_summary(
+                    results,
+                    output_dir,
+                    len(paths),
+                    cancel.is_set(),
+                    unique_inputs=len(source_hashes)
+                    if not missing_identity and len(results) == len(paths)
+                    else None,
+                )
+            return results
     finally:
         client.close()

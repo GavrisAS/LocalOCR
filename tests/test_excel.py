@@ -354,3 +354,23 @@ def test_overwrite_cancel_and_replace_failure(tmp_path, monkeypatch):
         write_workbook(doc, path, overwrite=True)
     assert path.read_bytes() == b"original"
     assert not list(tmp_path.glob(".localocr-*"))
+
+
+def test_display_warning_uses_actual_excel_row_and_column(tmp_path):
+    from localocr.domain import Cell, Table, TableDocument
+
+    table = Table(
+        [
+            Cell(r, c, "long text " * 700 if (r, c) == (1, 2) else "ok")
+            for r in range(2)
+            for c in range(3)
+        ],
+        2,
+        3,
+    )
+    target = tmp_path / "coordinates.xlsx"
+    write_workbook(TableDocument([table]), target)
+    book = load_workbook(target)
+    warnings = list(book["Проверка"].iter_rows(min_row=2, values_only=True))
+    assert any(row[1:3] == (2, 3) and "DISPLAY_LIMIT" in row[3] for row in warnings)
+    book.close()

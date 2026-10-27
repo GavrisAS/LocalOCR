@@ -25,6 +25,13 @@ class AppConfig:
     precision: str = "f16"
     embedded_device: str = "auto"
     simple_mode: str = "server"
+    ollama_num_ctx: int = 32768
+    ollama_num_predict: int = 16000
+    ollama_table_stop: bool = True
+    ocr_max_calls: int = 24
+    ocr_max_image_seconds: float = 180.0
+    embedded_max_image_seconds: float = 600.0
+    fail_soft: bool = False
 
     def settings(self, timeout=300):
         from localocr.embedded import EmbeddedSettings
@@ -33,7 +40,11 @@ class AppConfig:
 
         if self.provider == "embedded":
             return EmbeddedSettings(
-                precision=self.precision, device_mode=self.embedded_device, timeout=timeout
+                precision=self.precision,
+                device_mode=self.embedded_device,
+                timeout=timeout,
+                max_calls=self.ocr_max_calls,
+                max_image_seconds=self.embedded_max_image_seconds,
             )
         if self.provider == "openwebui":
             return OpenWebUISettings(
@@ -44,9 +55,20 @@ class AppConfig:
                 ssl_verify=self.ssl_verify,
                 trust_env=self.trust_env,
                 timeout=timeout,
+                max_calls=self.ocr_max_calls,
+                max_image_seconds=self.ocr_max_image_seconds,
             )
         if self.provider == "ollama":
-            return Settings(url=self.ollama_url, model=self.ollama_model, timeout=timeout)
+            return Settings(
+                url=self.ollama_url,
+                model=self.ollama_model,
+                timeout=timeout,
+                num_ctx=self.ollama_num_ctx,
+                num_predict=self.ollama_num_predict,
+                table_stop=self.ollama_table_stop,
+                max_calls=self.ocr_max_calls,
+                max_image_seconds=self.ocr_max_image_seconds,
+            )
         raise ValueError("Неизвестный provider")
 
 

@@ -74,6 +74,8 @@ def selected_settings(
             model_path=model_path,
             mmproj_path=mmproj_path,
             timeout=timeout,
+            max_calls=config.ocr_max_calls,
+            max_image_seconds=config.embedded_max_image_seconds,
         )
     return config.settings(timeout)
 
@@ -155,6 +157,13 @@ def convert(
     overwrite: bool = False,
     timeout: float = 300,
     diagnostics: bool = False,
+    fail_soft: Annotated[
+        bool | None,
+        typer.Option(
+            "--fail-soft/--no-fail-soft",
+            help="Сохранить доступный OCR-текст в частичной XLSX; требуется проверка",
+        ),
+    ] = None,
 ):
     try:
         setup_logging()
@@ -181,21 +190,39 @@ def convert(
             recursive,
             overwrite,
             diagnostics,
+            fail_soft=(load_config().fail_soft if use_config else False)
+            if fail_soft is None
+            else fail_soft,
             on_network_event=typer.echo if debug_http else None,
             progress=lambda done, total, message: typer.echo(f"[{done}/{total}] {message}"),
         )
+        if any(r.batch_level for r in results):
+            typer.echo(results[0].message)
+            raise typer.Exit(3)
         typer.echo(f"Обнаружено файлов: {len(results)}")
         for status, label in [
             ("SUCCESS", "Успешно обработано"),
             ("REVIEW", "Требуют проверки"),
+            ("PARTIAL", "Частично восстановлено"),
             ("FAILED", "Ошибок"),
             ("SKIPPED", "Пропущено"),
         ]:
             typer.echo(f"{label}: {sum(r.status == status for r in results)}")
+        typer.echo(f"Возобновлено без OCR: {sum(r.resumed for r in results)}")
+        if any(r.pipeline_version for r in results):
+            from localocr.failsoft import result_summary
+
+            typer.echo(result_summary(results))
+        typer.echo(
+            f"OCR-наблюдений: {sum(r.recognized_anchors for r in results)} · "
+            f"подтверждено: {sum(r.verified_anchors for r in results)} · "
+            f"нерешённых позиций: {sum(r.unresolved_anchors for r in results)} · "
+            f"непроверено: {sum(r.unverified_content for r in results)}"
+        )
         typer.echo(
             f"Каталог результатов: {output_dir or ((source if source.is_dir() else source.parent) / 'results')}"
         )
-        if any(result.status in {"FAILED", "REVIEW"} for result in results):
+        if any(result.status in {"FAILED", "REVIEW", "PARTIAL"} for result in results):
             raise typer.Exit(1)
     except (ValueError, OSError) as error:
         from localocr.runtime import write_error

@@ -21,6 +21,7 @@ from localocr.network import emit
 from localocr.ollama import OCRServerError
 from localocr.providers import OpenWebUIChatProvider, OpenWebUISettings, chat_payload, chat_text
 from localocr.runtime import portable_root
+from localocr.supervisor import launch_owned, terminate_owned
 
 _ENGINE_LOCK = Lock()
 
@@ -36,6 +37,8 @@ class EmbeddedSettings:
     startup_timeout: float = 300
     num_predict: int = 16000
     ctx_size: int = 32768
+    max_calls: int = 24
+    max_image_seconds: float = 600
 
     def paths(self) -> tuple[Path, Path, Path]:
         root = portable_root() / "embedded"
@@ -55,6 +58,8 @@ class EmbeddedSettings:
             raise ValueError("Недопустимый timeout Embedded")
         if not 256 <= self.num_predict <= 32768 or not 2048 <= self.ctx_size <= 131072:
             raise ValueError("Недопустимые параметры Embedded")
+        if not 1 <= self.max_calls <= 96 or not 1 <= self.max_image_seconds <= 7200:
+            raise ValueError("Недопустимый бюджет изображения")
         for path in self.paths()[1:]:
             if not path.is_file() or path.stat().st_size == 0:
                 raise ValueError(f"Компонент Embedded не установлен: {path}")
@@ -84,6 +89,8 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
             num_predict=settings.num_predict,
             retries=1,
             api="chat",
+            max_calls=settings.max_calls,
+            max_image_seconds=settings.max_image_seconds,
         )
 
     def doctor(self):
@@ -146,7 +153,7 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
 
     def probe(self, candidate):
         # Bounded, cancellable discovery; no models, network or downloads.
-        self.process = subprocess.Popen(
+        self.process = launch_owned(
             [str(candidate.engine), "--offline", "--list-devices"],
             cwd=candidate.engine.parent,
             env={
@@ -156,7 +163,6 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
             },
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         self.diagnostics.clear()
         self.reader = Thread(target=self.drain, args=(self.process.stdout,), daemon=True)
@@ -172,7 +178,7 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
                 self.cancel.wait(0.05)
             self.reader.join(timeout=2)
             output = "\n".join(list(self.diagnostics))
-            if self.process.returncode:
+            if self.process.poll():
                 raise OCRServerError(
                     f"GPU probe failed: exit={self.process.returncode} {output[:4096]}"
                 )
@@ -261,7 +267,7 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
                 for key, value in os.environ.items()
                 if not key.startswith(("LLAMA_", "HF_", "MTMD_", "GGML_"))
             }
-            self.process = subprocess.Popen(
+            self.process = launch_owned(
                 [
                     str(engine),
                     "-m",
@@ -296,7 +302,6 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             self.reader = Thread(target=self.drain, args=(self.process.stdout,), daemon=True)
             self.reader.start()
@@ -392,13 +397,7 @@ class EmbeddedOCRProvider(OpenWebUIChatProvider):
         try:
             if self.process is not None:
                 process, self.process = self.process, None
-                if process.poll() is None:
-                    process.terminate()
-                    try:
-                        process.wait(timeout=2)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait(timeout=2)
+                terminate_owned(process)
         finally:
             if self.reader is not None:
                 self.reader.join(timeout=2)

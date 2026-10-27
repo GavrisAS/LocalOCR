@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from localocr import __version__, build_commit
-from localocr.config import AppConfig, config_dir, load_config, save_config, setup_logging
+from localocr.config import config_dir, load_config, save_config, setup_logging
 from localocr.network import redact
 from localocr.ollama import Cancelled
 from localocr.providers import create_provider
@@ -43,10 +43,11 @@ class Worker(QThread):
     network = Signal(str)
     runtime_status = Signal(str)
 
-    def __init__(self, folder: str, settings, check=False):
+    def __init__(self, folder: str, settings, check=False, fail_soft=False):
         super().__init__()
         self.folder, self.settings, self.check = folder, settings, check
         self.cancel = Event()
+        self.fail_soft = fail_soft
 
     def run(self):
         try:
@@ -68,6 +69,7 @@ class Worker(QThread):
                         Path(self.folder),
                         settings,
                         cancel=self.cancel,
+                        fail_soft=self.fail_soft,
                         on_network_event=self.network.emit,
                         on_runtime_status=self.runtime_status.emit,
                         progress=lambda a, b, c: self.progress.emit(a, b, c),
@@ -97,6 +99,11 @@ class Window(QMainWindow):
         config = load_config()
         self.folder = QLineEdit(config.folder)
         self.config = config
+        self.fail_soft = QCheckBox("Сохранять частичные данные (fail-soft)")
+        self.fail_soft.setChecked(config.fail_soft)
+        self.fail_soft.setToolTip(
+            "Сохранить доступный OCR-текст, даже если таблица неполная. Требуется проверка XLSX."
+        )
         self.provider = QComboBox()
         for label, value in [
             ("Встроенная GLM-OCR", "embedded"),
@@ -150,6 +157,7 @@ class Window(QMainWindow):
         row.addWidget(self.folder)
         row.addWidget(self.browse)
         layout.addLayout(row)
+        layout.addWidget(self.fail_soft)
         layout.addWidget(self.provider)
         self.mode_widgets = {}
         for mode, fields in {
@@ -202,7 +210,9 @@ class Window(QMainWindow):
                 widget.setVisible(mode == self.provider.currentData())
 
     def current_config(self):
-        return AppConfig(
+        return replace(
+            self.config,
+            fail_soft=self.fail_soft.isChecked(),
             simple_mode=self.config.simple_mode,
             folder=self.folder.text(),
             ollama_url=self.url.text(),
@@ -221,6 +231,7 @@ class Window(QMainWindow):
     def controls(self):
         return [
             self.start,
+            self.fail_soft,
             self.check,
             self.browse,
             self.folder,
@@ -276,7 +287,9 @@ class Window(QMainWindow):
             )
             return
         self.bar.setRange(0, 0)
-        self.worker = Worker(self.folder.text(), settings, check)
+        self.worker = Worker(
+            self.folder.text(), settings, check, fail_soft=self.fail_soft.isChecked()
+        )
         _ACTIVE_WORKER = self.worker
         from localocr.embedded import EmbeddedSettings
 
@@ -317,18 +330,25 @@ class Window(QMainWindow):
         else:
             counts = {
                 status: sum(r.status == status for r in result)
-                for status in ["SUCCESS", "REVIEW", "FAILED", "SKIPPED"]
+                for status in ["SUCCESS", "REVIEW", "PARTIAL", "FAILED", "SKIPPED"]
             }
             self.status.appendPlainText(
                 f"Обработано файлов: {len(result)}\n"
                 f"Успешно: {counts['SUCCESS']} · Требуют проверки (REVIEW): {counts['REVIEW']}\n"
-                f"Ошибок: {counts['FAILED']} · Пропущено: {counts['SKIPPED']}\n"
+                f"Частично (PARTIAL): {counts['PARTIAL']} · Ошибок: {counts['FAILED']} · Пропущено: {counts['SKIPPED']}\n"
+                f"Возобновлено без OCR: {sum(r.resumed for r in result)}\n"
                 f"Каталог результатов: {Path(self.folder.text()) / 'results'}"
             )
+            if any(r.pipeline_version for r in result):
+                from localocr.failsoft import result_summary
+
+                self.status.appendPlainText(result_summary(result))
             for item in result:
-                if item.status in {"REVIEW", "FAILED"}:
+                if item.status in {"REVIEW", "PARTIAL", "FAILED"}:
                     self.status.appendPlainText(
-                        f"{item.source}: {item.status}; предупреждений: {item.warnings}. {item.message}"
+                        f"{item.source}: {item.status}; OCR-наблюдений: {item.recognized_anchors}; "
+                        f"нерешённых позиций: {item.unresolved_anchors}; непроверено: {item.unverified_content}; "
+                        f"предупреждений: {item.warnings}. {item.message}"
                     )
         if self.worker and not self.worker.cancel.is_set():
             self.bar.setRange(0, 1)
@@ -385,6 +405,10 @@ class SimpleWindow(Window):
         row.addWidget(self.folder)
         row.addWidget(self.browse)
         layout.addLayout(row)
+        layout.addWidget(self.fail_soft)
+        self.advanced = QPushButton("Полный интерфейс / настройки сервера…")
+        self.advanced.clicked.connect(self.open_advanced)
+        layout.addWidget(self.advanced)
         layout.addWidget(QLabel("Способ распознавания:"))
         self.modes = QButtonGroup(self)
         self.mode_buttons = {}
@@ -428,6 +452,16 @@ class SimpleWindow(Window):
         for before, after in zip(tab_order, tab_order[1:]):
             QWidget.setTabOrder(before, after)
 
+    def open_advanced(self):
+        try:
+            save_config(self.current_config())
+        except OSError as error:
+            self.status.appendPlainText(write_error(error))
+            return
+        self.full_window = Window()
+        self.full_window.show()
+        self.hide()
+
     def mode(self):
         return next(
             (mode for mode, button in self.mode_buttons.items() if button.isChecked()), "server"
@@ -442,25 +476,29 @@ class SimpleWindow(Window):
         self.show_status("Готово")
 
     def current_config(self):
-        return replace(self.config, folder=self.folder.text(), simple_mode=self.mode())
+        return replace(
+            self.config,
+            folder=self.folder.text(),
+            simple_mode=self.mode(),
+            fail_soft=self.fail_soft.isChecked(),
+        )
 
     def runtime_settings(self):
         config = self.current_config()
         if self.mode() == "server":
-            if not all(
-                value.strip()
-                for value in (config.openwebui_url, config.openwebui_model, config.api_token)
-            ):
+            if config.provider == "ollama":
+                return config.settings()
+            if not all(value.strip() for value in (config.openwebui_url, config.openwebui_model)):
                 raise ValueError(
-                    f"Укажите openwebui_url, openwebui_model и api_token в {config_dir() / 'config.json'} или в полном GUI (--full-gui)"
+                    f"Укажите openwebui_url и openwebui_model в {config_dir() / 'config.json'} или в полном GUI (--full-gui)"
                 )
-            return replace(config, provider="openwebui", openwebui_api="proxy").settings()
+            return replace(config, provider="openwebui").settings()
         return replace(
             config, provider="embedded", precision="f16", embedded_device=self.mode()
         ).settings()
 
     def controls(self):
-        return [*super().controls(), *self.mode_buttons.values()]
+        return [*super().controls(), self.advanced, *self.mode_buttons.values()]
 
 
 def main():

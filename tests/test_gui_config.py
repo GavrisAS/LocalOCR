@@ -108,3 +108,29 @@ def test_gui_backend_fields_persist_independently(tmp_path, monkeypatch):
     assert restored.token.text() == "fixture-plain-token"
     assert restored.api.currentData() == "chat"
     restored.close()
+
+
+def test_full_gui_preserves_expert_json_settings():
+    from dataclasses import replace
+
+    app = QApplication.instance() or QApplication([])
+    config = replace(
+        AppConfig(),
+        provider="ollama",
+        ollama_num_ctx=65536,
+        ollama_num_predict=8000,
+        ollama_table_stop=False,
+        ocr_max_calls=8,
+        ocr_max_image_seconds=75.0,
+    )
+    save_config(config)
+    window = Window()
+    actual = window.current_config()
+    assert actual.ollama_num_ctx == 65536
+    assert actual.ollama_num_predict == 8000
+    assert actual.ollama_table_stop is False
+    assert actual.ocr_max_calls == 8 and actual.ocr_max_image_seconds == 75.0
+    settings = actual.settings()
+    assert settings.max_calls == 8 and settings.max_image_seconds == 75.0
+    window.close()
+    app.processEvents()
