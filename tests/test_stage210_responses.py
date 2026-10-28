@@ -321,6 +321,11 @@ def test_worker_layout_provenance_and_finish_readback(tmp_path):
     assert "TRUNCATED_CONFIRMED" in outcome["error_codes"]
     provenance = json.loads((private / "layout-provenance.json").read_text(encoding="utf-8"))
     assert len(provenance["metadata"]) == 3
+    literal = postprocess.convert_raw(
+        "В инструкции table[[1,2,3,4]] — пример", tmp_path / "natural.xlsx", model_id=case["model"]
+    )
+    assert literal["outcome"]["layout_markers_remaining"] == 1
+    assert literal["outcome"]["layout_markers_removed"] == 0
 
 
 def test_parser_limits_are_bounded_and_dont_suppress_neighbor(tmp_path, monkeypatch):

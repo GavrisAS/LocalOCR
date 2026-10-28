@@ -927,6 +927,7 @@ def result_metrics(result):
             "layout_markers_removed",
             "layout_metadata_characters",
             "layout_metadata_uncertain",
+            "layout_markers_remaining",
             "completion",
         )
     }
