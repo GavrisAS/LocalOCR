@@ -323,7 +323,11 @@ def qualify(root, version, commit):
                     def launch(*args, **kwargs):
                         child = old_launch(*args, **kwargs)
                         if fault == "crash":
-                            postprocess.terminate_owned(child)
+                            # Job close is normal cleanup and may produce exit=0 on Windows.
+                            # Inject an actual abnormal exit through our held process handle;
+                            # the parent still closes the owned Job/tree in its finally block.
+                            assert child.poll() is None
+                            child.kill()
                         return child
 
                     setattr(postprocess, "launch_owned", launch)

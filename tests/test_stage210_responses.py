@@ -4,6 +4,9 @@ import hashlib
 import io
 import json
 import runpy
+import subprocess
+import sys
+import time
 from dataclasses import asdict, replace
 from pathlib import Path
 from threading import Event, Timer
@@ -431,3 +434,35 @@ def test_explicit_newline_preserves_already_crlf_response():
     stream2.write(raw)
     stream2.flush()
     assert exact.getvalue() == raw.encode("utf-8")
+
+
+def test_owned_abnormal_exit_is_nonzero_on_both_platforms(tmp_path):
+    from localocr.supervisor import launch_owned, terminate_owned
+
+    spool, staging = tmp_path / "spool", tmp_path / "staging"
+    spool.mkdir()
+    staging.mkdir()
+    (spool / "raw.txt").write_text("synthetic", encoding="utf-8")
+    (spool / "input.json").write_text(
+        json.dumps({"truncated": False, "normalization": {}}), encoding="utf-8"
+    )
+    child = launch_owned(
+        [
+            sys.executable,
+            str(Path("tests/helpers/stage27_fault_worker.py").resolve()),
+            "parser_timeout",
+            str(spool),
+            str(staging),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        assert child.poll() is None
+        child.kill()
+        deadline = time.monotonic() + 2
+        while child.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert child.poll() is not None and child.poll() != 0
+    finally:
+        terminate_owned(child)
