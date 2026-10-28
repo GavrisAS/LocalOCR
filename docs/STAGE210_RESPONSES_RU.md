@@ -39,7 +39,9 @@ Windows raw с такими маркерами отсутствуют: реал�
 Raw response и layout provenance сохраняются только при opt-in diagnostics.
 Offsets layout относятся к тексту после существующего inert/control filter;
 оригинальный response хранится отдельно. Число удалённых маркеров/символов и число
-неоднозначных префиксов доступны как отдельные агрегаты. Метаданные не становятся
+неоднозначных префиксов доступны как отдельные агрегаты. LAYOUT_MARKERS_REMAINING
+считает оставшиеся похожие последовательности, включая допустимые natural-text
+collisions; это не автоматическое доказательство утечки metadata. Метаданные не становятся
 значениями XLSX. Координаты никогда не объединяют таблицы. Лимиты: 4M символов,
 100000 строк raw, 4096 layout-кандидатов, bbox до 256 символов, 64 таблицы,
 глубина HTML 128, 200000 тегов/блок, канонический предел 100000 slots/таблицу.
@@ -88,3 +90,9 @@ bbox/Markdown с точным readback значений, API length/malformed/ti
 Windows Job process tree дополнительно проверяется source suite на Windows.
 Настоящий OpenWebUI Chat не получает SERVER_LIVE_PASS по synthetic loopback.
 PRODUCT_RELEASE=NO_GO до принятия владельцем реальной Windows-сборки.
+
+Windows qualification выявила дополнительный дефект raw spool: автоматический
+перевод строк мог превращать исходный CRLF в CRCRLF и терять Markdown-структуру.
+Spool write/read и opt-in response sidecar теперь используют newline="", сохраняя
+raw bytes и соответствие SHA. Regression проверяет HTTP → diagnostics → реальный
+worker → точные ячейки XLSX на обеих ОС, плюс воспроизведение TextIO translation.

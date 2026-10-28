@@ -84,6 +84,9 @@ class Extraction:
             layout_markers_removed=len(self.layout_metadata),
             layout_metadata_characters=self.layout_metadata_characters,
             layout_metadata_uncertain=self.layout_uncertain,
+            layout_markers_remaining=sum(
+                len(re.findall(r"(?:table|text|sub_title)\s*\[\[", v)) for v in self.values
+            ),
             completion=self.completion,
         )
 
@@ -655,7 +658,9 @@ def recognize_failsoft(
     # Raw sidecars remain opt-in. No response text is emitted via network events.
     if diagnostics is not None:
         diagnostics.mkdir(parents=True, exist_ok=True)
-        (diagnostics / "response-1.txt").write_text(raw, encoding="utf-8", errors="surrogatepass")
+        (diagnostics / "response-1.txt").write_text(
+            raw, encoding="utf-8", errors="surrogatepass", newline=""
+        )
         atomic_json(
             diagnostics / "response-identity.json",
             dict(
@@ -783,6 +788,7 @@ def write_batch_summary(
             "LAYOUT_MARKERS_REMOVED": sum(r["layout_markers_removed"] for r in rows),
             "LAYOUT_METADATA_UNCERTAIN": sum(r["layout_metadata_uncertain"] for r in rows),
             "UNPLACED_TEXT": sum(r["unplaced_text"] for r in rows),
+            "LAYOUT_MARKERS_REMAINING": sum(r["layout_markers_remaining"] for r in rows),
         }
     )
     atomic_json(

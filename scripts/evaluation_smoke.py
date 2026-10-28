@@ -236,7 +236,11 @@ def qualify(root, version, commit):
                         for c in row
                         if c.value
                     ]
-                    assert sorted(values) == sorted(fixture_case["values"])
+                    assert sorted(values) == sorted(fixture_case["values"]), (
+                        label,
+                        len(values),
+                        len(fixture_case["values"]),
+                    )
                     assert item["tables"] == fixture_case["tables"]
                     assert item["layout_markers_removed"] == fixture_case["removed"]
                 if label == "confirmed-length":

@@ -128,7 +128,7 @@ def convert_raw(
             {"schema": "localocr-postprocess/1", "pending": str(staging.resolve())},
         )
         atomic_json(staging / "owner.json", {"spool": str(spool.resolve())})
-        (spool / "raw.txt").write_text(raw, encoding="utf-8", errors="surrogatepass")
+        (spool / "raw.txt").write_text(raw, encoding="utf-8", errors="surrogatepass", newline="")
         atomic_json(
             spool / "input.json",
             {
@@ -226,7 +226,7 @@ def run_worker(spool, staging):
         options = bounded_json(spool / "input.json")
         if (spool / "raw.txt").stat().st_size > MAX_RESPONSE * 4:
             raise ValueError("RESOURCE_FAILURE")
-        raw = (spool / "raw.txt").read_text(encoding="utf-8", errors="surrogatepass")
+        raw = (spool / "raw.txt").read_text(encoding="utf-8", errors="surrogatepass", newline="")
         ex = extract(
             raw,
             truncated=options["truncated"],

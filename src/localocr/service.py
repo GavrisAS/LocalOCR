@@ -282,6 +282,7 @@ def convert(
                                 "layout_markers_removed",
                                 "layout_metadata_characters",
                                 "layout_metadata_uncertain",
+                                "layout_markers_remaining",
                             )
                         }
                         result = JobResult(
@@ -515,6 +516,7 @@ def convert(
                             message=code,
                             error_codes=codes,
                             no_content=code == "NO_CONTENT",
+                            content_kind="NO_CONTENT" if code == "NO_CONTENT" else "UNKNOWN",
                             timeout=code in {"TIMEOUT", "PARSER_TIMEOUT", "WRITER_TIMEOUT"},
                             worker_crashed=crashed,
                             calls=int(getattr(client, "http_ocr_calls", before_http) > before_http),

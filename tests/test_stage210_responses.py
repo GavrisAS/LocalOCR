@@ -1,5 +1,7 @@
 """Stage210 contracts use synthetic documents; no private data or model inference."""
 
+import hashlib
+import io
 import json
 import runpy
 from dataclasses import asdict, replace
@@ -10,7 +12,7 @@ import pytest
 from openpyxl import load_workbook
 from PIL import Image
 
-from localocr import deepseek_layout, postprocess, service
+from localocr import deepseek_layout, failsoft, postprocess, service
 from localocr.domain import JobResult, StructureError
 from localocr.failsoft import extract, failure_code, recognize_failsoft, write_extraction
 from localocr.journal import Journal, settings_identity
@@ -32,6 +34,7 @@ def test_fixture_contract_and_determinism(case, tmp_path):
     assert result.values == case["values"]
     assert len(result.document.tables) == case["tables"]
     assert len(result.layout_metadata) == case["removed"]
+    assert result.outcome()["layout_markers_remaining"] == (1 if case["id"] == "DS-05" else 0)
     assert asdict(result) == asdict(extract(case["raw"], model_id=case["model"]))
     if not result.values:
         assert result.outcome()["no_content"]
@@ -382,3 +385,44 @@ def test_calibration_counts_text_span_and_multiplicity_independently():
     assert unplaced["text_multiset_exact"] == 2 and unplaced["missing_anchors"] == 2
     swapped = score(extract("<table><tr><td>A</td><td>0012</td></tr></table>"), gold)
     assert swapped["nonempty_text_exact"] == 0 and swapped["row_col_span_exact"] == 2
+
+
+def test_crlf_raw_bytes_survive_http_diagnostics_and_worker(server, tmp_path):
+    case = FIXTURES[1]
+    url, state = server
+    state["text"] = case["raw"]
+    client = OpenWebUIOllamaProxyProvider(OpenWebUISettings(url=url, model=case["model"]))
+    private = tmp_path / "private"
+    raw, truncated = recognize_failsoft(
+        Image.new("RGB", (16, 16)),
+        client,
+        private,
+        prompt=failsoft.selected_prompt(client.settings),
+        raw_only=True,
+    )
+    assert raw == case["raw"] and not truncated
+    assert (private / "response-1.txt").read_bytes() == raw.encode("utf-8")
+    identity = json.loads((private / "response-identity.json").read_text("utf-8"))
+    assert (
+        identity["sha256"] == hashlib.sha256((private / "response-1.txt").read_bytes()).hexdigest()
+    )
+    result = postprocess.convert_raw(raw, tmp_path / "crlf.xlsx", model_id=case["model"])
+    assert result["tables"] == 1 and result["outcome"]["table_structured"]
+    book = load_workbook(tmp_path / "crlf.xlsx")
+    assert [c.value for row in book["Таблица 1"] for c in row] == case["values"]
+    book.close()
+
+
+def test_explicit_newline_preserves_already_crlf_response():
+    # Reproduce the Windows default TextIO conversion independently of the host OS.
+    raw = FIXTURES[1]["raw"]
+    translated = io.BytesIO()
+    stream = io.TextIOWrapper(translated, encoding="utf-8", newline="\r\n")
+    stream.write(raw)
+    stream.flush()
+    assert b"\r\r\n" in translated.getvalue()
+    exact = io.BytesIO()
+    stream2 = io.TextIOWrapper(exact, encoding="utf-8", newline="")
+    stream2.write(raw)
+    stream2.flush()
+    assert exact.getvalue() == raw.encode("utf-8")

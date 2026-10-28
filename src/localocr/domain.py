@@ -212,5 +212,6 @@ class JobResult:
     layout_markers_removed: int = 0
     layout_metadata_characters: int = 0
     layout_metadata_uncertain: int = 0
+    layout_markers_remaining: int = 0
     completion: dict = field(default_factory=dict)
     request_metrics: dict = field(default_factory=dict)
