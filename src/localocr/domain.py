@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 
-PIPELINE_VERSION = "evidence-grid-1"
+PIPELINE_VERSION = "evidence-grid-2"
 
 
 class StructureError(ValueError):
@@ -201,3 +201,16 @@ class JobResult:
     ocr_calls: int = 0
     batch_level: bool = False
     child_peak_rss_kib: int | None = None
+    # Versioned orthogonal content/finish evidence; old journal records default safely.
+    metrics_version: str = "ocr-content/1"
+    ocr_contentful: bool = False
+    content_kind: str = "UNKNOWN"
+    distinct_content_values: int = 0
+    content_characters: int = 0
+    numeric_text_tokens: int = 0
+    unplaced_text: int = 0
+    layout_markers_removed: int = 0
+    layout_metadata_characters: int = 0
+    layout_metadata_uncertain: int = 0
+    completion: dict = field(default_factory=dict)
+    request_metrics: dict = field(default_factory=dict)

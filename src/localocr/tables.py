@@ -33,6 +33,8 @@ class TableParser(HTMLParser):
             elif tag in {"td", "th"}:
                 if self.row is None or self.cell is not None:
                     raise StructureError("Некорректное расположение ячейки")
+                if any(sum(k == name for k, v in attrs) > 1 for name in ("rowspan", "colspan")):
+                    raise StructureError("Неоднозначные span атрибуты")
                 attributes = dict(attrs)
                 try:
                     rs = int(attributes.get("rowspan", "1"))
@@ -126,15 +128,19 @@ def parse_response(text: str) -> TableDocument:
             r"\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?", lines[1]
         ):
             raise StructureError("Ответ не содержит однозначную таблицу")
+
+        def fields(line):
+            return line.removeprefix("|").removesuffix("|").split("|")
+
+        width = len(fields(lines[1]))
         rows = []
         for index, line in enumerate([lines[0], *lines[2:]]):
             if "|" not in line or "\\|" in line:
                 raise StructureError("Неоднозначная Markdown-таблица")
+            if len(fields(line)) != width:
+                raise StructureError("Markdown separator не совпадает с числом ячеек")
             rows.append(
-                [
-                    Cell(index, 0, value.strip(), is_header=index == 0)
-                    for value in line.strip("|").split("|")
-                ]
+                [Cell(index, 0, value.strip(), is_header=index == 0) for value in fields(line)]
             )
         document = TableDocument([place_rows(rows)])
     document.validate()

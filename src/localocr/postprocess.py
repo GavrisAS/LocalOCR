@@ -97,6 +97,9 @@ def convert_raw(
     target,
     *,
     truncated=False,
+    completion=None,
+    model_id="",
+    diagnostics=None,
     normalization=None,
     cancel=None,
     overwrite=False,
@@ -127,7 +130,14 @@ def convert_raw(
         atomic_json(staging / "owner.json", {"spool": str(spool.resolve())})
         (spool / "raw.txt").write_text(raw, encoding="utf-8", errors="surrogatepass")
         atomic_json(
-            spool / "input.json", {"truncated": truncated, "normalization": normalization or {}}
+            spool / "input.json",
+            {
+                "truncated": truncated,
+                "completion": completion or {},
+                "model_id": model_id,
+                "save_layout": diagnostics is not None,
+                "normalization": normalization or {},
+            },
         )
         process = launch_owned(
             worker_argv(spool.resolve(), staging.resolve()),
@@ -177,6 +187,9 @@ def convert_raw(
                 or file_hash(artifact) != metadata["sha256"]
             ):
                 raise ValueError("RESOURCE_FAILURE")
+            if diagnostics is not None and (spool / "layout.json").exists():
+                diagnostics.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(spool / "layout.json", diagnostics / "layout-provenance.json")
             if before_publish:
                 before_publish()
             if cancel.is_set():
@@ -201,14 +214,34 @@ def run_worker(spool, staging):
         resource.setrlimit(resource.RLIMIT_CPU, (45, 45))
     stage = "parser"
     try:
-        from localocr.failsoft import FailSoftDocument, extract, failure_code, write_failsoft
+        from localocr.failsoft import (
+            FailSoftDocument,
+            extract,
+            failure_code,
+            result_metrics,
+            write_failsoft,
+        )
 
         started = time.monotonic()
         options = bounded_json(spool / "input.json")
         if (spool / "raw.txt").stat().st_size > MAX_RESPONSE * 4:
             raise ValueError("RESOURCE_FAILURE")
         raw = (spool / "raw.txt").read_text(encoding="utf-8", errors="surrogatepass")
-        ex = extract(raw, truncated=options["truncated"])
+        ex = extract(
+            raw,
+            truncated=options["truncated"],
+            model_id=options.get("model_id", ""),
+            completion=options.get("completion"),
+        )
+        if options.get("save_layout"):
+            atomic_json(
+                spool / "layout.json",
+                {
+                    "schema": "deepseek-layout/1",
+                    "metadata": ex.layout_metadata,
+                    "uncertain": ex.layout_uncertain,
+                },
+            )
         document = FailSoftDocument(
             ex.document.tables,
             ex.document.issues,
@@ -217,6 +250,7 @@ def run_worker(spool, staging):
             ex.codes,
             ex.source_format,
         )
+        document.extraction_metrics = result_metrics(ex)
         document.validate()
         parsed = time.monotonic()
         atomic_json(spool / "parsed.json", {"stage": "writer", "parser_finished": parsed})

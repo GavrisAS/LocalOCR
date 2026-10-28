@@ -8,6 +8,7 @@ import socket
 import time
 from dataclasses import dataclass
 from threading import Event
+from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
@@ -98,7 +99,9 @@ async def pinned_url(url: str) -> tuple[str, str, str]:
 class OllamaClient:
     server_name = "Ollama"
     supports_text_recognition = True
+    image_deadline: float
     request_budget_remaining: int
+    last_http_metrics: dict[str, Any]
 
     def __init__(self, settings: Settings, cancel: Event | None = None):
         settings.validate()
@@ -141,6 +144,12 @@ class OllamaClient:
         is_ocr = isinstance(payload, dict) and bool(
             payload.get("images") or payload.get("messages")
         )
+        if is_ocr:
+            self.last_http_metrics = {
+                "http_status": None,
+                "retry_backoff_seconds": 0.0,
+                "endpoint_family": "chat" if endpoint.endswith("/chat/completions") else "ollama",
+            }
         deadline = time.monotonic() + self.settings.timeout
         if is_ocr:
             deadline = min(deadline, getattr(self, "image_deadline", deadline))
@@ -152,6 +161,8 @@ class OllamaClient:
         ) as client:
             for attempt in range(self.settings.retries + 1):
                 self.check_cancel()
+                if is_ocr and time.monotonic() >= deadline:
+                    raise OCRServerError("TIMEOUT: image deadline")
                 if is_ocr and hasattr(self, "request_budget_remaining"):
                     if self.request_budget_remaining <= 0:
                         raise OCRServerError("IMAGE_REQUEST_BUDGET_EXHAUSTED")
@@ -198,6 +209,8 @@ class OllamaClient:
                             self.http_ocr_calls = getattr(self, "http_ocr_calls", 0) + 1
                         response = await client.send(request, stream=True)
                         status_seen = response.status_code
+                        if is_ocr:
+                            self.last_http_metrics["http_status"] = status_seen
                         network_stream = response.extensions.get("network_stream")
                         if network_stream is not None:
                             peer = network_stream.get_extra_info("server_addr")
@@ -310,6 +323,8 @@ class OllamaClient:
                             },
                         ) from error
                     if error.response.status_code >= 500 and attempt < self.settings.retries:
+                        if is_ocr:
+                            self.last_http_metrics["retry_backoff_seconds"] += 0.2
                         await asyncio.sleep(0.2)
                         continue
                     raise OCRServerError(
@@ -319,6 +334,8 @@ class OllamaClient:
                     detail = f"{category(error)} ; HTTP status: {status_seen if status_seen is not None else 'нет'} ; {exception_detail(error)}"
                     emit(self, detail)
                     if attempt < self.settings.retries:
+                        if is_ocr:
+                            self.last_http_metrics["retry_backoff_seconds"] += 0.2
                         await asyncio.sleep(0.2)
                         continue
                     raise OCRServerError(detail) from error
@@ -444,9 +461,16 @@ class OllamaClient:
         )
         if not isinstance(text, str) or not text.strip():
             raise OCRServerError("EMPTY_RESPONSE: Пустой OCR-ответ", self.last_diagnostic)
-        if data.get("done") is not True or data.get("done_reason") == "length":
+        from localocr.response_protocol import completion_metadata
+
+        self.last_completion_metadata = completion_metadata(data, "ollama")
+        if self.last_completion_metadata["finish_state"] == "GENERATION_LIMIT_CONFIRMED":
             raise OCRServerError(
-                "Усечённый ответ OCR; требуется меньший фрагмент", self.last_diagnostic
+                "GENERATION_LIMIT_CONFIRMED: Усечённый ответ OCR", self.last_diagnostic
+            )
+        if self.last_completion_metadata["transport_incomplete"]:
+            raise OCRServerError(
+                "TRANSPORT_INCOMPLETE: Ответ OCR не завершён", self.last_diagnostic
             )
         # Ollama omits the matched stop sequence from response. Restore only that
         # delimiter after a confirmed stop, never cell values or incomplete rows.

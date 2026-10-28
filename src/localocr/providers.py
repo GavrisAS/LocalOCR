@@ -12,6 +12,7 @@ from localocr.ollama import OCRServerError, OllamaClient, Settings
 class OCRProvider(Protocol):
     on_network_event: object
     on_runtime_status: object
+    last_completion_metadata: dict
     last_run_metrics: dict
 
     def doctor(self) -> str: ...
@@ -161,6 +162,9 @@ class OpenWebUIChatProvider(OpenWebUIOllamaProxyProvider):
                 "response_length": len(content) if isinstance(content, str) else None,
             }
         )
+        from localocr.response_protocol import completion_metadata
+
+        self.last_completion_metadata = completion_metadata(data, "chat")
         return chat_text(data, single_table=single_table)
 
 
@@ -194,7 +198,7 @@ def chat_text(data, *, single_table=False) -> str:
         choice = data["choices"][0]
         text = choice["message"]["content"]
         if choice.get("finish_reason") == "length":
-            raise OCRServerError("Усечённый ответ OCR; требуется меньший фрагмент")
+            raise OCRServerError("GENERATION_LIMIT_CONFIRMED: Усечённый ответ OCR")
         if not isinstance(text, str) or not text.strip():
             raise OCRServerError("Пустой OCR-ответ")
         if (

@@ -61,7 +61,7 @@ def qualify(root, version, commit):
                 timeout=30,
             )
         assert json.loads((moved / "config.json").read_text("utf-8"))["fail_soft"] is False
-        checks["relocated_simple_full_gui"] = "PASS_STARTUP_ONLY"
+        checks["relocated_simple_full_gui"] = "PASS_STARTUP_SETTINGS_FAILSOFT_CONTROLS"
         for flag, expected in (("--version", version), ("--build-commit", commit)):
             assert (
                 subprocess.check_output([str(cli), flag], cwd=cwd, env=env, timeout=30)
@@ -89,8 +89,13 @@ def qualify(root, version, commit):
             def do_GET(self):
                 self.respond(
                     {
-                        "models": [{"name": "glm-ocr:latest", "digest": "synthetic-fixed"}],
-                        "data": [{"id": "glm-ocr:latest"}],
+                        "models": [
+                            {
+                                "name": state.get("model", "glm-ocr:latest"),
+                                "digest": "synthetic-fixed",
+                            }
+                        ],
+                        "data": [{"id": state.get("model", "glm-ocr:latest")}],
                     }
                 )
 
@@ -99,28 +104,51 @@ def qualify(root, version, commit):
                     assert self.headers.get("Authorization") == state["expected_token"]
                     payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                     assert payload["stream"] is False
+                    expected_prompt = (
+                        "<|grounding|>Convert the document to markdown."
+                        if payload["model"].startswith("deepseek-ocr:")
+                        else "Table Recognition:"
+                    )
                     if self.path == "/api/chat/completions":
                         data = payload["messages"][0]["content"]
+                        assert (
+                            next(p["text"] for p in data if p["type"] == "text") == expected_prompt
+                        )
                         encoded = next(
                             p["image_url"]["url"].split(",", 1)[1]
                             for p in data
                             if p["type"] == "image_url"
                         )
                     else:
+                        assert payload["prompt"] == expected_prompt
                         encoded = payload["images"][0]
                     decoded = Image.open(io.BytesIO(base64.b64decode(encoded, validate=True)))
                     decoded.verify()
                     state["posts"] += 1
+                    if state.get("delay"):
+                        time.sleep(state["delay"])
+                    if state.get("malformed"):
+                        self.respond({"choices": [{}], "response": None})
+                        return
                     body = (
                         {
                             "choices": [
-                                {"message": {"content": state["raw"]}, "finish_reason": "stop"}
+                                {
+                                    "message": {"content": state["raw"]},
+                                    "finish_reason": state.get("reason", "stop"),
+                                }
                             ]
                         }
                         if self.path == "/api/chat/completions"
-                        else {"response": state["raw"], "done": True}
+                        else {
+                            "response": state["raw"],
+                            "done": True,
+                            "done_reason": state.get("reason", "stop"),
+                        }
                     )
                     self.respond(body)
+                except BrokenPipeError, ConnectionResetError:
+                    pass
                 except Exception as error:
                     state["errors"].append(type(error).__name__)
                     self.send_error(500)
@@ -135,8 +163,25 @@ def qualify(root, version, commit):
                 ("token", "synthetic value", "chat", "synthetic-evaluation-only"),
                 ("empty", "<think>no observations</think>", "ollama", None),
             ]
+            fixtures = json.loads(Path("tests/fixtures/stage210.json").read_text("utf-8"))
+            for fixture_case in (fixtures[0], fixtures[1], fixtures[6], fixtures[7]):
+                for api in ("proxy", "chat"):
+                    cases.append((fixture_case["id"] + "-" + api, fixture_case["raw"], api, None))
+            cases.extend(
+                [
+                    ("confirmed-length", "0012", "proxy", None),
+                    ("malformed-api", "unused", "chat", None),
+                    ("timeout", "unused", "proxy", None),
+                ]
+            )
             for label, raw, api, token in cases:
                 state["raw"] = raw
+                fixture_case = next((c for c in fixtures if label.startswith(c["id"] + "-")), None)
+                state["model"] = fixture_case["model"] if fixture_case else "glm-ocr:latest"
+                state["reason"] = "length" if label == "confirmed-length" else "stop"
+                state["malformed"] = label == "malformed-api"
+                state["delay"] = 2 if label == "timeout" else 0
+                before_posts = state["posts"]
                 state["expected_token"] = "Bearer " + token if token else None
                 out = work / label
                 command = [
@@ -144,7 +189,9 @@ def qualify(root, version, commit):
                     "convert",
                     str(fixture),
                     "--model",
-                    "glm-ocr:latest",
+                    state["model"],
+                    "--timeout",
+                    "1" if label == "timeout" else "30",
                     "--fail-soft",
                     "--output-dir",
                     str(out),
@@ -160,19 +207,41 @@ def qualify(root, version, commit):
                 p = subprocess.run(command, cwd=cwd, env=env, capture_output=True, timeout=60)
                 assert p.returncode == 1, (label, p.returncode)
                 assert not state["errors"], state["errors"]
+                assert 1 <= state["posts"] - before_posts <= 3
                 report = json.loads(max(out.glob("report-*.json")).read_text("utf-8"))
                 item = report["results"][0] if isinstance(report, dict) else report[0]
                 target = out / (fixture.stem + ".xlsx")
-                if label == "empty":
+                if label in {"empty", "malformed-api", "timeout"}:
+                    if label == "malformed-api":
+                        assert "MALFORMED_API_RESPONSE" in item["error_codes"]
+                    if label == "timeout":
+                        assert "TIMEOUT" in item["error_codes"]
                     assert item["status"] == "FAILED" and not item["xlsx_with_data"]
                     assert not target.exists()
-                    checks["no_content_no_false_yield"] = "PASS"
+                    checks[label + "_no_false_yield"] = "PASS"
+                    if label == "timeout":
+                        time.sleep(1.2)
                     continue
                 assert item["status"] in {"PARTIAL", "REVIEW"} and item["xlsx_with_data"]
                 book = load_workbook(target)
                 assert "Проверка" in book.sheetnames
                 assert any(c.value for s in book if s.title != "Проверка" for row in s for c in row)
                 assert all(c.data_type != "f" for s in book for row in s for c in row)
+                if fixture_case:
+                    values = [
+                        c.value
+                        for s in book
+                        if s.title != "Проверка"
+                        for row in s
+                        for c in row
+                        if c.value
+                    ]
+                    assert sorted(values) == sorted(fixture_case["values"])
+                    assert item["tables"] == fixture_case["tables"]
+                    assert item["layout_markers_removed"] == fixture_case["removed"]
+                if label == "confirmed-length":
+                    assert item["completion"]["finish_state"] == "GENERATION_LIMIT_CONFIRMED"
+                    assert "TRUNCATED_CONFIRMED" in item["error_codes"]
                 book.close()
                 checks[label + "_multimodal_readback"] = "PASS"
                 if label == "plain":
@@ -234,9 +303,67 @@ def qualify(root, version, commit):
             assert book["Распознанный текст"]["A1"].value == "next observed value"
             book.close()
             checks["frozen_worker_late_cancel_then_next_readback"] = "PASS"
+            old_parser, old_writer, old_launch = (
+                postprocess.PARSER_SECONDS,
+                postprocess.WRITER_SECONDS,
+                postprocess.launch_owned,
+            )
+            try:
+                for fault in ("parser", "writer", "crash", "cancel"):
+                    fault_target = work / (fault + ".xlsx")
+                    postprocess.PARSER_SECONDS = 0.001 if fault == "parser" else 30.0
+                    postprocess.WRITER_SECONDS = 0.001 if fault == "writer" else 30.0
+                    fault_cancel = Event()
+                    timer = threading.Timer(0.05, fault_cancel.set) if fault == "cancel" else None
+
+                    def launch(*args, **kwargs):
+                        child = old_launch(*args, **kwargs)
+                        if fault == "crash":
+                            postprocess.terminate_owned(child)
+                        return child
+
+                    setattr(postprocess, "launch_owned", launch)
+                    if timer:
+                        timer.start()
+                    try:
+                        postprocess.convert_raw(
+                            "\n".join(f"synthetic {i}" for i in range(5000)),
+                            fault_target,
+                            cancel=fault_cancel,
+                        )
+                    except (ValueError, TimeoutError, Cancelled) as error:
+                        expected = {
+                            "parser": "PARSER_TIMEOUT",
+                            "writer": "WRITER_TIMEOUT",
+                            "crash": "RESOURCE_FAILURE",
+                            "cancel": "CANCELLED",
+                        }[fault]
+                        assert expected in str(error), (fault, type(error).__name__)
+                    else:
+                        raise AssertionError("Frozen fault was not observed: " + fault)
+                    finally:
+                        if timer:
+                            timer.join()
+                        postprocess.PARSER_SECONDS, postprocess.WRITER_SECONDS = (
+                            old_parser,
+                            old_writer,
+                        )
+                        setattr(postprocess, "launch_owned", old_launch)
+                    assert not fault_target.exists()
+                    postprocess.convert_raw("next after fault", fault_target)
+                    book = load_workbook(fault_target)
+                    assert book["Распознанный текст"]["A1"].value == "next after fault"
+                    book.close()
+                    checks["frozen_worker_" + fault + "_then_next"] = "PASS"
+            finally:
+                postprocess.PARSER_SECONDS, postprocess.WRITER_SECONDS = old_parser, old_writer
+                setattr(postprocess, "launch_owned", old_launch)
         finally:
             runtime.ROOT_OVERRIDE = old_root
             setattr(postprocess, "worker_argv", old_argv)
+        log = (moved / "localocr.log").read_text("utf-8")
+        assert "synthetic-evaluation-only" not in log
+        checks["empty_authorization_absent_and_token_redacted"] = "PASS"
         assert not list(work.rglob(".localocr-pending-*"))
         assert not any(cwd.iterdir())
         assert all(

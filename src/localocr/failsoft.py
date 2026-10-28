@@ -16,9 +16,8 @@ from openpyxl.utils import get_column_letter
 from localocr.domain import StructureError, TableDocument
 from localocr.excel import write_workbook
 from localocr.ollama import Cancelled
-from localocr.tables import parse_response
 
-VERSION = "stage27-failsoft/1"
+VERSION = "stage210-failsoft/2"
 MAX_XLSX_ROWS = 1_048_576
 MAX_SALVAGE_ROWS = 100_000
 MAX_TABLES = 64
@@ -34,6 +33,11 @@ class Extraction:
     source_format: str = "plain"
     discarded_markup: int = 0
     readback_nonempty_data_cells: int = 0
+
+    completion: dict = field(default_factory=dict)
+    layout_metadata: list[dict] = field(default_factory=list)
+    layout_uncertain: int = 0
+    layout_metadata_characters: int = 0
 
     @property
     def values(self):
@@ -64,6 +68,23 @@ class Extraction:
             source_format=self.source_format,
             discarded_markup=self.discarded_markup,
             coordinates="format-local only; no verified image geometry",
+            metrics_version="ocr-content/1",
+            ocr_contentful=bool(self.values),
+            content_kind=("PARTIAL_STRUCTURED" if self.lines else "STRUCTURED_TABLE")
+            if structured
+            else "TEXT_ONLY"
+            if self.values
+            else "NO_CONTENT",
+            distinct_content_values=len(set(self.values)),
+            content_characters=sum(map(len, self.values)),
+            numeric_text_tokens=sum(
+                len(re.findall(r"(?<!\w)[+-]?\d+(?:[.,]\d+)?(?!\w)", v)) for v in self.values
+            ),
+            unplaced_text=len(self.lines),
+            layout_markers_removed=len(self.layout_metadata),
+            layout_metadata_characters=self.layout_metadata_characters,
+            layout_metadata_uncertain=self.layout_uncertain,
+            completion=self.completion,
         )
 
 
@@ -160,7 +181,9 @@ def plain_lines(raw, rejected=None):
     return result
 
 
-def extract(raw: str, *, truncated=False, format_hint=None) -> Extraction:
+def extract(
+    raw: str, *, truncated=False, format_hint=None, model_id="", completion=None
+) -> Extraction:
     if len(raw) > MAX_RESPONSE:
         raise ValueError("RESPONSE_LIMIT")
     raw = re.sub(r"<(?:script|style|iframe|object|template)\b[^>]*/>", "", raw, flags=re.I)
@@ -171,32 +194,42 @@ def extract(raw: str, *, truncated=False, format_hint=None) -> Extraction:
         flags=re.I | re.S,
     )
     raw = visible(raw)
-    result = Extraction(codes=["SUSPECTED_TRUNCATION"] if truncated else [])
+    result = Extraction(completion=completion or {})
+    if completion and completion.get("finish_state") == "GENERATION_LIMIT_CONFIRMED":
+        result.codes.extend(
+            ["GENERATION_LIMIT_CONFIRMED", "TRUNCATED_CONFIRMED", "SUSPECTED_TRUNCATION"]
+        )
+    elif truncated:
+        result.codes.extend(["RESPONSE_INCOMPLETE_SUSPECTED", "SUSPECTED_TRUNCATION"])
+    if completion and completion.get("transport_incomplete"):
+        result.codes.append("TRANSPORT_INCOMPLETE")
+    from localocr.deepseek_layout import adapt, is_deepseek
+
+    if is_deepseek(model_id):
+        layout = adapt(raw)
+        raw = layout.text
+        result.layout_metadata = layout.metadata
+        result.layout_uncertain = layout.uncertain
+        result.layout_metadata_characters = layout.metadata_characters
+        if layout.uncertain:
+            result.codes.append("LAYOUT_METADATA_UNCERTAIN")
+    # A parser suspicion is independent of the API completion state.
+    incomplete = (
+        any(
+            len(re.findall(r"<" + tag + r"\b", raw, re.I))
+            != len(re.findall(r"</" + tag + r"\s*>", raw, re.I))
+            for tag in ("table", "tr", "td", "th")
+        )
+        or sum(bool(re.fullmatch(r"\s*```[\w-]*\s*", line)) for line in raw.splitlines()) % 2
+    )
+    if incomplete:
+        result.codes.extend(
+            ["RESPONSE_INCOMPLETE_SUSPECTED", "SUSPECTED_INCOMPLETE", "SUSPECTED_TRUNCATION"]
+        )
     if not raw.strip():
         return result
     if raw.count("\n") > 100_000:
         raise ValueError("RESPONSE_LINE_LIMIT")
-    # Refuse expensive rectangular hypotheses; retain all visible text instead.
-    spans = re.findall(r"<(?:td|th)\b[^>]*>", raw, flags=re.I)
-    area = 0
-    for tag in spans:
-        sizes = []
-        for name in ("rowspan", "colspan"):
-            match = re.search(name + r"\s*=\s*['\"]?(\d+)", tag, re.I)
-            sizes.append(
-                min(int(match[1]), 100_001)
-                if match and len(match[1]) < 8
-                else 100_001
-                if match
-                else 1
-            )
-        area += sizes[0] * sizes[1]
-        if area > 100_000:
-            break
-    if area > 100_000 or len(re.findall(r"<table\b", raw, re.I)) > 64:
-        result.codes.append("RESPONSE_STRUCTURE_LIMIT")
-        result.lines = plain_lines(raw, result.codes)
-        return result
     if format_hint == "tsv":
         # Only an explicit producer contract makes tabs authoritative delimiters.
         rows = [line.split("\t") for line in raw.splitlines()]
@@ -217,59 +250,17 @@ def extract(raw: str, *, truncated=False, format_hint=None) -> Extraction:
             result.document.validate()
             result.source_format = "explicit-tsv"
             return result
-    if re.search(r"<table\b", raw, re.I):
-        result.source_format = "html"
+    from localocr.structured_blocks import extract_islands
 
-        # Complete islands are independent; coordinates never bridge invalid gaps.
-        def island(match):
-            try:
-                doc = parse_response(match.group())
-                result.document.tables.extend(doc.tables)
-                # Captions or text outside cells inside a valid table are still observations.
-                return "\n".join(
-                    plain_lines(
-                        re.sub(
-                            r"<(?:td|th)\b[^>]*>.*?</(?:td|th)\s*>",
-                            "\n",
-                            match.group(),
-                            flags=re.I | re.S,
-                        )
-                    )
-                )
-            except StructureError, ValueError:
-                result.codes.append("PARSER_FAILURE")
-                return match.group()
-
-        remainder = re.sub(r"<table\b[^>]*>.*?</table\s*>", island, raw, flags=re.I | re.S)
-        if re.search(r"<(?:table|tr|td|th)\b", remainder, re.I):
-            result.codes.extend(["UNRESOLVED", "PARSER_FAILURE"])
-
-        result.lines = plain_lines(remainder, result.codes)
-        result.discarded_markup = len(re.findall(r"<[^>]+>", remainder))
-    else:
-        lines = raw.splitlines(keepends=True)
-        remainder = []
-        index = 0
-        while index < len(lines):
-            end = index + 2
-            if end <= len(lines) and re.fullmatch(
-                r"\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?", lines[index + 1].strip()
-            ):
-                while end < len(lines) and "|" in lines[end] and lines[end].strip():
-                    end += 1
-                try:
-                    doc = parse_response("".join(lines[index:end]))
-                    result.document.tables.extend(doc.tables)
-                    result.source_format = "markdown"
-                    index = end
-                    continue
-                except StructureError, ValueError:
-                    result.codes.append("PARSER_FAILURE")
-            remainder.append(lines[index])
-            index += 1
-        result.lines = plain_lines("".join(remainder), result.codes)
-        if result.lines and ("|" in raw or "\t" in raw):
-            result.codes.append("UNRESOLVED")
+    selected = model_id.casefold().split(":", 1)[0].rsplit("/", 1)[-1]
+    extract_islands(raw, result, plain_lines, preserve_rows=selected in {"glm-ocr", "deepseek-ocr"})
+    if (
+        model_id
+        and result.lines
+        and not result.document.tables
+        and "RESPONSE_STRUCTURE_LIMIT" not in result.codes
+    ):
+        result.codes.append("SOURCE_FORMAT_UNSTRUCTURED")
     # Artifact-bearing tables cannot acquire invented blank anchors when placeholders are removed.
     keep = []
     for table in result.document.tables:
@@ -523,6 +514,8 @@ class FailSoftDocument(TableDocument):
     source_format: str = "plain"
     readback_nonempty_data_cells: int = 0
 
+    extraction_metrics: dict = field(default_factory=dict)
+
     def validate(self):
         if self.tables:
             super().validate()
@@ -539,6 +532,7 @@ class FailSoftDocument(TableDocument):
         )
         ex.readback_nonempty_data_cells = self.readback_nonempty_data_cells
         state = ex.outcome()
+        original.update(self.extraction_metrics)
         original["status"] = state["status"]
         original.update(
             xlsx_with_data=state["xlsx_with_data"],
@@ -567,6 +561,16 @@ def write_failsoft(document, path, overwrite=False, cancel=None, before_publish=
     document.unplaced_lines = ex.lines
     document.error_codes = ex.codes
     document.readback_nonempty_data_cells = ex.readback_nonempty_data_cells
+    state = ex.outcome()
+    for name in (
+        "ocr_contentful",
+        "content_kind",
+        "distinct_content_values",
+        "content_characters",
+        "numeric_text_tokens",
+        "unplaced_text",
+    ):
+        document.extraction_metrics[name] = state[name]
 
 
 def recognize_failsoft(
@@ -596,7 +600,8 @@ def recognize_failsoft(
     client.check_cancel()
     before_http = getattr(client, "http_ocr_calls", 0)
     client.image_deadline = started + client.settings.max_image_seconds
-    client.request_budget_remaining = min(1 + client.settings.retries, client.settings.max_calls)
+    client.request_budget_remaining = min(3, 1 + client.settings.retries, client.settings.max_calls)
+    client.last_completion_metadata = {}
     encoded = encode(image)
     if isinstance(client, OpenWebUIChatProvider):
         endpoint = (
@@ -610,7 +615,7 @@ def recognize_failsoft(
         try:
             choice = data["choices"][0]
             raw = choice["message"]["content"]
-            truncated = choice.get("finish_reason") == "length"
+
         except (KeyError, IndexError, TypeError) as error:
             raise OCRServerError("MALFORMED_API_RESPONSE") from error
     else:
@@ -629,9 +634,24 @@ def recognize_failsoft(
         )
         data = client.request("POST", endpoint, payload)
         raw = data.get("response")
-        truncated = data.get("done_reason") == "length" or data.get("done") is not True
+
     if not isinstance(raw, str):
         raise OCRServerError("MALFORMED_API_RESPONSE")
+    from localocr.response_protocol import completion_metadata
+
+    family = "chat" if isinstance(client, OpenWebUIChatProvider) else "ollama"
+    completion = completion_metadata(data, family)
+    completion.update(
+        prompt_sha256=hashlib.sha256(prompt.encode()).hexdigest(),
+        model_id=client.settings.model,
+        model_digest=getattr(client, "model_identity", {}).get("digest"),
+        generation=payload.get(
+            "options", {"max_tokens": client.settings.num_predict, "temperature": 0}
+        ),
+        timeout=client.settings.timeout,
+    )
+    client.last_completion_metadata = completion
+    truncated = completion["finish_state"] == "GENERATION_LIMIT_CONFIRMED"
     # Raw sidecars remain opt-in. No response text is emitted via network events.
     if diagnostics is not None:
         diagnostics.mkdir(parents=True, exist_ok=True)
@@ -642,6 +662,7 @@ def recognize_failsoft(
                 sha256=hashlib.sha256(raw.encode("utf-8", errors="surrogatepass")).hexdigest(),
                 endpoint_family=endpoint,
                 truncated=truncated,
+                completion=completion,
             ),
         )
     client.check_cancel()
@@ -654,7 +675,12 @@ def recognize_failsoft(
     )
     if raw_only:
         return raw, truncated
-    result = extract(raw, truncated=truncated)
+    result = extract(
+        raw,
+        truncated=truncated,
+        completion=completion,
+        model_id="" if isinstance(client, EmbeddedOCRProvider) else client.settings.model,
+    )
     document = FailSoftDocument(
         result.document.tables,
         result.document.issues,
@@ -663,6 +689,7 @@ def recognize_failsoft(
         result.codes,
         result.source_format,
     )
+    document.extraction_metrics = result_metrics(result)
     document.validate()
     client.last_run_metrics = dict(
         calls=1,
@@ -739,6 +766,25 @@ def write_batch_summary(
             "DIAGNOSTIC_ONLY": counts["diagnostic_only"],
         }
     )
+    counts.update(
+        {
+            "COMPLETED": sum(r["status"] in {"SUCCESS", "REVIEW", "PARTIAL"} for r in rows),
+            "NOT_RUN": max(0, discovered - len(rows)),
+            "XLSX_EXISTS": sum(bool(r["output"]) and Path(r["output"]).is_file() for r in rows),
+            "XLSX_READBACK_OK": counts["xlsx_with_data"],
+            "OCR_CONTENTFUL": sum(r["ocr_contentful"] for r in rows),
+            "STRUCTURED_TABLE": counts["table_structured"],
+            "TEXT_ONLY": sum(r["content_kind"] == "TEXT_ONLY" for r in rows),
+            "DISTINCT_CONTENT_VALUES_PER_DOCUMENT_SUM": sum(
+                r["distinct_content_values"] for r in rows
+            ),
+            "CONTENT_CHARACTERS": sum(r["content_characters"] for r in rows),
+            "NUMERIC_TEXT_TOKENS": sum(r["numeric_text_tokens"] for r in rows),
+            "LAYOUT_MARKERS_REMOVED": sum(r["layout_markers_removed"] for r in rows),
+            "LAYOUT_METADATA_UNCERTAIN": sum(r["layout_metadata_uncertain"] for r in rows),
+            "UNPLACED_TEXT": sum(r["unplaced_text"] for r in rows),
+        }
+    )
     atomic_json(
         output_dir / "summary.json",
         dict(
@@ -796,6 +842,9 @@ def failure_code(error, stage):
         "PARSER_FAILURE",
         "WRITER_FAILURE",
         "IO_FAILURE",
+        "LAYOUT_MARKER_LIMIT",
+        "MALFORMED_API_RESPONSE",
+        "TRANSPORT_INCOMPLETE",
     }:
         return str(error)
     if str(error) in {
@@ -813,6 +862,14 @@ def failure_code(error, stage):
         return "TIMEOUT"
     if isinstance(error, OCRServerError):
         detail = str(error)
+        if "TRANSPORT_INCOMPLETE" in detail:
+            return "TRANSPORT_INCOMPLETE"
+        if "MALFORMED_API_RESPONSE" in detail:
+            return "MALFORMED_API_RESPONSE"
+        if "INVALID_JSON" in detail or "EMPTY_RESPONSE" in detail:
+            return "TRANSPORT_INCOMPLETE"
+        if "IMAGE_REQUEST_BUDGET_EXHAUSTED" in detail:
+            return "LIMIT_EXCEEDED"
         if stage == "doctor" and ("MODEL_NOT_FOUND" in detail or "не установлена" in detail):
             return "MODEL_UNAVAILABLE"
         if "RESOURCE_FAILURE" in detail or "MEMORY" in detail.upper():
@@ -847,3 +904,23 @@ def result_summary(results):
         f"Сохранённый текст: {sum(r.partial_text_salvage for r in results)} · "
         f"Непустых ячеек: {sum(r.nonempty_data_cells for r in results)}"
     )
+
+
+def result_metrics(result):
+    state = result.outcome()
+    return {
+        k: state[k]
+        for k in (
+            "metrics_version",
+            "ocr_contentful",
+            "content_kind",
+            "distinct_content_values",
+            "content_characters",
+            "numeric_text_tokens",
+            "unplaced_text",
+            "layout_markers_removed",
+            "layout_metadata_characters",
+            "layout_metadata_uncertain",
+            "completion",
+        )
+    }

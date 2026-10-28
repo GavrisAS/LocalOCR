@@ -236,6 +236,8 @@ def convert(
                 published_hash = None
                 fingerprint = {}
                 attempts = 0
+                client.last_completion_metadata = {}
+                setattr(client, "last_http_metrics", {})
                 stage = "fingerprint"
                 before_http = getattr(client, "http_ocr_calls", 0)
                 try:
@@ -272,6 +274,14 @@ def convert(
                                 "partial_structured",
                                 "diagnostic_only",
                                 "no_content",
+                                "ocr_contentful",
+                                "distinct_content_values",
+                                "content_characters",
+                                "numeric_text_tokens",
+                                "unplaced_text",
+                                "layout_markers_removed",
+                                "layout_metadata_characters",
+                                "layout_metadata_uncertain",
                             )
                         }
                         result = JobResult(
@@ -284,6 +294,10 @@ def convert(
                             + previous.get("message", ""),
                             shapes=[tuple(shape) for shape in previous.get("shapes", [])],
                             error_codes=previous.get("error_codes", []),
+                            request_metrics=previous.get("request_metrics", {}),
+                            completion=previous.get("completion", {}),
+                            content_kind=previous.get("content_kind", "UNKNOWN"),
+                            metrics_version=previous.get("metrics_version", "legacy"),
                             resumed=True,
                             **evidence,
                         )
@@ -370,6 +384,11 @@ def convert(
                                 raw,
                                 target,
                                 truncated=truncated,
+                                completion=getattr(client, "last_completion_metadata", {}),
+                                model_id=""
+                                if isinstance(settings, EmbeddedSettings)
+                                else settings.model,
+                                diagnostics=diag,
                                 normalization=image.info.get("localocr_normalization", {}),
                                 overwrite=overwrite,
                                 cancel=cancel,
@@ -531,6 +550,9 @@ def convert(
                             else "Ошибка обработки; см. локальный лог",
                         )
                 if fail_soft:
+                    if not result.resumed:
+                        result.request_metrics = getattr(client, "last_http_metrics", {})
+                        result.completion = getattr(client, "last_completion_metadata", {})
                     result.ocr_calls = result.calls
                     result.provider = type(settings).__name__
                     result.model_id = getattr(settings, "model", "embedded-glm-ocr")

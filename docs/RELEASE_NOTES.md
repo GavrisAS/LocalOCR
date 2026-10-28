@@ -33,3 +33,15 @@ SERVER_PENDING, EMBEDDED_PENDING и MANUAL_GUI_PENDING сохраняются. �
 синтетический loopback HTTP, XLSX readback и startup обеих оболочек; настоящие
 OpenWebUI GLM/DeepSeek и ручная приёмка GUI ещё не подтверждены. Проверка 1000
 реальных OCR и промышленная готовность не заявляются. PRODUCT_RELEASE=NO_GO.
+
+Stage 2.10: в opt-in fail-soft добавлен ограниченный DeepSeek layout adapter и
+structured-first разбор независимых HTML/Markdown-блоков. Координаты bbox не создают
+табличную сетку. Валидные закрытые строки могут сохраниться рядом с повреждённым
+остатком. Один модельный запрос, максимум три фактические HTTP attempts на файл
+с учётом сетевых retries; обычный многошаговый режим остаётся отдельным.
+
+API length, нормальная остановка, неизвестный finish и подозрение парсера разделены.
+PARTIAL/REVIEW необходимо проверять по оригиналу. Промышленная accuracy не заявлена.
+Исторический offline replay — отдельные локальные Direct серии; новые Windows
+layout raw, актуальный OpenWebUI Server Live и ручная Windows приёмка PENDING.
+Evaluation only; PRODUCT_RELEASE=NO_GO. Веса, pins и product lock не менялись.

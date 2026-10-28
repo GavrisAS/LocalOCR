@@ -1,0 +1,12 @@
+[
+  {"id":"DS-01","model":"deepseek-ocr:3b","raw":"table[[0,0,900,900]]\n```html\n<table><tr><td>0012</td><td>=1+1</td></tr></table>\n```\ntext[[10,20,50,60]]Сумма 1,20\nsub_title[[0,0,20,30]]Итог","values":["0012","=1+1","Сумма 1,20","Итог"],"tables":1,"removed":3},
+  {"id":"DS-02","model":"deepseek-ocr:3b","raw":" table [[ 0, 1, 20, 30 ]]\r\n| Код | Цена |\r\n| --- | --- |\r\n| 0012 | -0 |","values":["Код","Цена","0012","-0"],"tables":1,"removed":1},
+  {"id":"DS-03","model":"deepseek-ocr:3b","raw":"table[[0,0,20,30]]text[[1,2,3,4]]\n0012\ntext[[1,2,3,4]]\n@A","values":["0012","@A"],"tables":0,"removed":3},
+  {"id":"DS-04","model":"deepseek-ocr:3b","raw":"table[[0,0,20,30]]\ntext[[1,2,3,4]]","values":[],"tables":0,"removed":2},
+  {"id":"DS-05","model":"deepseek-ocr:3b","raw":"В инструкции table[[0,0,20,30]] — пример","values":["В инструкции table[[0,0,20,30]] — пример"],"tables":0,"removed":0},
+  {"id":"DS-06","model":"deepseek-ocr:3b","raw":"text[[1,2,3,4]]\n1 234,56\n0012\n01.02.2025\n+4\n-0\n@A","values":["1 234,56","0012","01.02.2025","+4","-0","@A"],"tables":0,"removed":1},
+  {"id":"GLM-01","model":"glm-ocr:latest","raw":"<table><tr><td>A &amp; Б</td><td>0012</td></tr></table>","values":["A & Б","0012"],"tables":1,"removed":0},
+  {"id":"GLM-02","model":"glm-ocr:latest","raw":"<table><tr><td>0012</td></tr><tr><td>хвост","values":["0012","хвост"],"tables":1,"removed":0},
+  {"id":"GLM-03","model":"glm-ocr:latest","raw":"<table><tr><td>A</td></tr></table>\nПодпись\n| B | C |\n| --- | --- |\n| 1 | 2 |\n\n<table><tr><td colspan=0>D</td></tr></table>","values":["A","B","C","1","2","Подпись","D"],"tables":2,"removed":0},
+  {"id":"GLM-04","model":"glm-ocr:latest","raw":"A  B\n1  2\n3\t4","values":["A  B","1  2","3\t4"],"tables":0,"removed":0}
+]

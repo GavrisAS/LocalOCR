@@ -103,7 +103,7 @@
 
 Удалённый v0.24 по-прежнему указывает на `3c93b4db4e39aa5c20b0648e1feb083044ad1e88`. У восьми assets v0.24 последнее обновление `2026-10-16T10:37:18Z`; эти assets не менялись.
 
-В корневой `.gitignore` добавлено `/data/`. Проверено: `git check-ignore -v data/00070.jpg` и `git check-ignore -v data/localocr-corrective-rerun/private-audit.json` указывают на это правило; `git ls-files -- data/` пуст. Git index не содержал файлов из `data/`. В коммит, CI artifacts, handoff и release ZIP не включать изображения, отчёты, XLSX, OCR-тексты или private audit.
+В корневой `.gitignore` добавлено `/data/`. Проверено: `git check-ignore -v data/private original (name withheld)` и `git check-ignore -v data/localocr-corrective-rerun/private-audit.json` указывают на это правило; `git ls-files -- data/` пуст. Git index не содержал файлов из `data/`. В коммит, CI artifacts, handoff и release ZIP не включать изображения, отчёты, XLSX, OCR-тексты или private audit.
 
 ## F. Ограничения
 

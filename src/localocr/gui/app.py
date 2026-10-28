@@ -5,6 +5,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 from threading import Event
+from typing import cast
 
 from PySide6.QtCore import QThread, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
@@ -522,6 +523,18 @@ def main():
             return 2
         if args.expected_commit and args.expected_commit != build_commit():
             return 2
+        # Exercise actual frozen controls without OCR or changing persisted defaults.
+        original = window.current_config()
+        window.fail_soft.setChecked(not original.fail_soft)
+        assert window.current_config().fail_soft != original.fail_soft
+        window.fail_soft.setChecked(original.fail_soft)
+        if not args.full_gui:
+            simple = cast(SimpleWindow, window)
+            simple.advanced.click()
+            full = simple.full_window
+            assert full.fail_soft.isChecked() == original.fail_soft
+            assert full.current_config().openwebui_model == original.openwebui_model
+            full.close()
         QTimer.singleShot(300, window.close)
         QTimer.singleShot(500, app.quit)
     return app.exec()
